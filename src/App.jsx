@@ -242,7 +242,7 @@ const SetupWizard = ({ onComplete }) => {
 const PortfolioPage = ({ data, onUpdate, pinUnlocked, onRequestPin }) => {
   const [showForm, setShowForm] = useState(false);
   const [editIdx, setEditIdx] = useState(null);
-  const blankForm = { code: "", name: "", sector: "", unit: "", buyPrice: "", currentPrice: "", date: "", note: "" };
+  const blankForm = { code: "", name: "", sector: "", unit: "", buyPrice: "", currentPrice: "", date: "", broker: "", catatan: "", note: "" };
   const [form, setForm] = useState(blankForm);
   const portfolio = data.portfolio || [];
 
@@ -314,6 +314,19 @@ const PortfolioPage = ({ data, onUpdate, pinUnlocked, onRequestPin }) => {
                   <input type="number" defaultValue={s.currentPrice || s.buyPrice} step="0.01" onBlur={e => updatePrice(i, e.target.value)} style={{ ...inp, padding: "6px 10px", width: 90, fontSize: 12 }} />
                   <span style={{ fontSize: 11, color: C.textFaint }}>RM</span>
                 </div>
+                {/* Broker & Catatan */}
+                <div style={{ display: "flex", gap: 16, marginBottom: 8, flexWrap: "wrap" }}>
+                  {s.broker && (
+                    <div style={{ fontSize: 11, color: C.textMuted }}>
+                      🏦 <strong>Broker:</strong> {s.broker}
+                    </div>
+                  )}
+                  {s.catatan && (
+                    <div style={{ fontSize: 11, color: C.textMuted }}>
+                      📋 <strong>Catatan:</strong> {s.catatan}
+                    </div>
+                  )}
+                </div>
                 {s.note && <div style={{ fontSize: 11, color: C.textMuted, fontStyle: "italic", marginBottom: 8 }}>📝 {s.note}</div>}
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <Btn variant="ghost" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => edit(i)}>Edit</Btn>
@@ -341,7 +354,12 @@ const PortfolioPage = ({ data, onUpdate, pinUnlocked, onRequestPin }) => {
             <Field label="CURRENT PRICE (RM)"><Inp type="number" step="0.01" value={form.currentPrice} onChange={e => setForm({...form, currentPrice: e.target.value})} /></Field>
             <Field label="DATE BOUGHT"><Inp type="date" value={form.date} onChange={e => setForm({...form, date: e.target.value})} /></Field>
           </div>
-          <Field label="NOTES"><Inp placeholder="Notes..." value={form.note} onChange={e => setForm({...form, note: e.target.value})} /></Field>
+          <Field label="BROKER"><Sel value={form.broker} onChange={e => setForm({...form, broker: e.target.value})}>
+            <option value="">Select broker...</option>
+            {BROKERS.map(b => <option key={b}>{b}</option>)}
+          </Sel></Field>
+          <Field label="CATATAN PELABURAN"><Inp placeholder="Sebab beli, strategi, sasaran..." value={form.catatan} onChange={e => setForm({...form, catatan: e.target.value})} /></Field>
+          <Field label="NOTES TAMBAHAN"><Inp placeholder="Notes lain..." value={form.note} onChange={e => setForm({...form, note: e.target.value})} /></Field>
           <div style={{ display: "flex", gap: 10 }}>
             <Btn style={{ flex: 1 }} onClick={save}>Save</Btn>
             <Btn variant="ghost" style={{ flex: 1 }} onClick={() => { setShowForm(false); setForm(blankForm); }}>Cancel</Btn>
@@ -429,7 +447,12 @@ const WatchlistPage = ({ data, onUpdate }) => {
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <Btn variant="ghost" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => setTrackIdx(trackIdx === i ? null : i)}>+ Track Today</Btn>
                 <Btn variant="primary" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => {
-                  const ji = { id: Date.now(), code: w.code, name: w.name, sector: w.sector, entryPrice: w.lastPrice || w.targetBuy || "", sl: w.targetSL || "", tp: "", lot: "", entryDate: new Date().toISOString().split("T")[0], techniques: [], note: w.note || "", status: "Open" };
+                  const entry = parseFloat(w.lastPrice || w.targetBuy || 0);
+                  const sl = parseFloat(w.targetSL || 0);
+                  const risk = entry - sl;
+                  const tp1 = risk > 0 ? +(entry + (risk * 2)).toFixed(3) : 0;
+                  const tp2 = risk > 0 ? +(entry + (risk * 3)).toFixed(3) : 0;
+                  const ji = { id: Date.now(), code: w.code, name: w.name, sector: w.sector, entryPrice: entry, sl, tp1, tp2, lot: "", rrr: 3, entryDate: new Date().toISOString().split("T")[0], techniques: [], note: w.note || "", status: "Open", partialExits: [], totalPL: 0 };
                   onUpdate({ ...data, journal: [ji, ...(data.journal || [])] });
                   alert(`${w.code} added to Trading Journal! ✅`);
                 }}>📒 Add to Journal</Btn>
@@ -577,6 +600,12 @@ const TechnicalPage = ({ data, onUpdate }) => {
     alert(`${a.code} added to Hunting List! ✅`);
   };
 
+  const addToWatchlist = (a) => {
+    const item = { id: Date.now(), code: a.code, name: a.name, sector: a.sector, targetBuy: a.close, targetSL: a.result?.sl || "", lastPrice: a.close, note: a.note || "", date: a.date, tracking: [] };
+    onUpdate({ ...data, watchlist: [item, ...(data.watchlist || [])] });
+    alert(`${a.code} added to Watchlist! ✅`);
+  };
+
   const del = (i) => { if (!window.confirm("Delete?")) return; onUpdate({ ...data, analysis: analysis.filter((_, x) => x !== i) }); setSelIdx(null); };
   const sel = selIdx !== null ? analysis[selIdx] : null;
 
@@ -671,9 +700,10 @@ const TechnicalPage = ({ data, onUpdate }) => {
 
           <div style={{ display: "flex", gap: 8 }}>
             {(sel.result?.signal === "STRONG BUY" || sel.result?.signal === "BUY") && (
-              <Btn variant="success" style={{ flex: 1 }} onClick={() => addToHunting(sel)}>🎯 Add to Hunting List</Btn>
+              <Btn variant="success" style={{ flex: 1 }} onClick={() => addToHunting(sel)}>🎯 Hunting List</Btn>
             )}
-            <Btn variant="ghost" onClick={() => edit(selIdx)}>✏️ Edit</Btn>
+            <Btn variant="ghost" style={{ flex: 1 }} onClick={() => addToWatchlist(sel)}>★ Watchlist</Btn>
+            <Btn variant="ghost" onClick={() => edit(selIdx)}>✏️</Btn>
             <Btn variant="ghost" onClick={() => setSelIdx(null)}>← Back</Btn>
           </div>
         </div>
@@ -705,6 +735,7 @@ const TechnicalPage = ({ data, onUpdate }) => {
                     {(a.result?.signal === "STRONG BUY" || a.result?.signal === "BUY") && (
                       <Btn variant="success" style={{ padding: "5px 10px", fontSize: 11 }} onClick={() => addToHunting(a)}>🎯</Btn>
                     )}
+                    <Btn variant="ghost" style={{ padding: "5px 10px", fontSize: 11 }} onClick={() => addToWatchlist(a)}>★</Btn>
                     <Btn variant="ghost" style={{ padding: "5px 10px", fontSize: 11 }} onClick={() => edit(i)}>✏️</Btn>
                     <Btn variant="danger" style={{ padding: "5px 10px", fontSize: 11 }} onClick={() => del(i)}>✕</Btn>
                   </div>
@@ -770,7 +801,22 @@ const HuntingPage = ({ data, onUpdate }) => {
 
   const execute = (i) => {
     const h = hunting[i];
-    const ji = { id: Date.now(), code: h.code, name: h.name, sector: h.sector, entryPrice: h.entry, sl: h.sl, tp: h.tp, lot: h.lot, rrr: h.rrr, techniques: h.techniques, note: h.note, entryDate: new Date().toISOString().split("T")[0], exitPrice: "", exitDate: "", status: "Open" };
+    const entry = parseFloat(h.entry) || 0;
+    const sl = parseFloat(h.sl) || 0;
+    const risk = entry - sl;
+    const rrr = parseFloat(h.rrr) || 3;
+    // Auto calculate TP1 (1:2) dan TP2 (1:RRR)
+    const tp1 = h.tp ? parseFloat(h.tp) : risk > 0 ? +(entry + (risk * 2)).toFixed(3) : 0;
+    const tp2 = risk > 0 ? +(entry + (risk * rrr)).toFixed(3) : h.tp ? parseFloat(h.tp) : 0;
+    const ji = {
+      id: Date.now(), code: h.code, name: h.name, sector: h.sector,
+      entryPrice: entry, sl, tp1, tp2,
+      lot: parseFloat(h.lot) || 0, rrr,
+      techniques: h.techniques || [], note: h.note || "",
+      entryDate: new Date().toISOString().split("T")[0],
+      exitPrice: "", exitDate: "", status: "Open",
+      partialExits: [], totalPL: 0,
+    };
     const u = [...hunting]; u[i] = { ...h, status: "Executed" };
     onUpdate({ ...data, huntingList: u, journal: [ji, ...(data.journal || [])] });
     alert(`${h.code} moved to Trading Journal! ✅`);
@@ -884,12 +930,14 @@ const PRE_CHECKLIST = [
   "RRR minimum 1:3?",
 ];
 
-const JournalPage = ({ data, onUpdate }) => {
+const JournalPage = ({ data, onUpdate, pinUnlocked, onRequestPin }) => {
   const [tab, setTab] = useState("open");
   const [showForm, setShowForm] = useState(false);
   const [showDetail, setShowDetail] = useState(null);
   const [closeIdx, setCloseIdx] = useState(null);
   const [partialIdx, setPartialIdx] = useState(null);
+  const [trackIdx, setTrackIdx] = useState(null);
+  const [trackF, setTrackF] = useState({ price: "", note: "", date: new Date().toISOString().split("T")[0] });
   const [exitF, setExitF] = useState({ exitPrice: "", exitDate: new Date().toISOString().split("T")[0], exitNote: "", exitReason: "", postMortem: { whatWorked: "", whatFailed: "", lesson: "" } });
   const [partialF, setPartialF] = useState({ price: "", lot: "", date: new Date().toISOString().split("T")[0] });
 
@@ -945,12 +993,13 @@ const JournalPage = ({ data, onUpdate }) => {
 
   const save = () => {
     if (!form.code || !form.entryPrice) return;
-    const entry = +form.entryPrice;
-    const sl = +form.sl;
-    const risk = entry - sl;
-    const tp1 = form.tp1 ? +form.tp1 : entry + (risk * 2);
-    const tp2 = form.tp2 ? +form.tp2 : entry + (risk * 3);
-    const item = { ...form, id: Date.now(), entryPrice: entry, sl, tp1: +tp1.toFixed(3), tp2: +tp2.toFixed(3), lot: +form.lot, status: "Open", partialExits: [], totalPL: 0 };
+    const entry = parseFloat(form.entryPrice);
+    const sl = parseFloat(form.sl) || 0;
+    const risk = sl > 0 ? entry - sl : 0;
+    // Auto calculate TP1 (1:2) dan TP2 (1:3) kalau kosong
+    const tp1 = form.tp1 && +form.tp1 > 0 ? +form.tp1 : risk > 0 ? +(entry + (risk * 2)).toFixed(3) : 0;
+    const tp2 = form.tp2 && +form.tp2 > 0 ? +form.tp2 : risk > 0 ? +(entry + (risk * parseFloat(form.rrr || 3))).toFixed(3) : 0;
+    const item = { ...form, id: Date.now(), entryPrice: entry, sl, tp1, tp2, lot: +form.lot, status: "Open", partialExits: [], totalPL: 0 };
     onUpdate({ ...data, journal: [item, ...journal] });
     setShowForm(false); setForm(blankForm);
   };
@@ -994,6 +1043,16 @@ const JournalPage = ({ data, onUpdate }) => {
 
   return (
     <div>
+      {!pinUnlocked && (
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 300 }}>
+          <div style={{ fontSize: 48, marginBottom: 14 }}>🔐</div>
+          <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>Trading Journal Locked</div>
+          <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 20, textAlign: "center" }}>Journal mengandungi data trade peribadi kau.<br/>Masukkan PIN untuk akses.</div>
+          <Btn onClick={onRequestPin}>Unlock Journal</Btn>
+        </div>
+      )}
+
+      {pinUnlocked && <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <h1 style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.4px" }}>📒 Trading Journal</h1>
         <Btn onClick={() => setShowForm(true)}>+ Add Trade</Btn>
@@ -1058,12 +1117,26 @@ const JournalPage = ({ data, onUpdate }) => {
                 {/* TP1 & TP2 */}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
                   <div style={{ background: C.greenLight, borderRadius: 8, padding: "8px 12px" }}>
-                    <div style={{ fontSize: 9, color: C.green, fontWeight: 600 }}>TP1 — SELL 50%</div>
-                    <div style={{ fontSize: 13, fontWeight: 800, fontFamily: "'DM Mono',monospace", color: C.green }}>RM {fmt(j.tp1||0)}</div>
+                    <div style={{ fontSize: 9, color: C.green, fontWeight: 600 }}>TP1 — SELL 50% (RRR 1:2)</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, fontFamily: "'DM Mono',monospace", color: C.green }}>
+                      {j.tp1 && j.tp1 > 0 ? `RM ${fmt(j.tp1)}` : "—"}
+                    </div>
+                    {j.tp1 && j.tp1 > 0 && j.entryPrice && (
+                      <div style={{ fontSize: 10, color: C.green, marginTop: 2 }}>
+                        +{(((j.tp1 - j.entryPrice) / j.entryPrice) * 100).toFixed(2)}% dari entry
+                      </div>
+                    )}
                   </div>
                   <div style={{ background: "#D1FAE5", borderRadius: 8, padding: "8px 12px" }}>
-                    <div style={{ fontSize: 9, color: C.green, fontWeight: 600 }}>TP2 — TRAILING</div>
-                    <div style={{ fontSize: 13, fontWeight: 800, fontFamily: "'DM Mono',monospace", color: C.green }}>RM {fmt(j.tp2||0)}</div>
+                    <div style={{ fontSize: 9, color: C.green, fontWeight: 600 }}>TP2 — TRAILING (RRR 1:{j.rrr||3})</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, fontFamily: "'DM Mono',monospace", color: C.green }}>
+                      {j.tp2 && j.tp2 > 0 ? `RM ${fmt(j.tp2)}` : "—"}
+                    </div>
+                    {j.tp2 && j.tp2 > 0 && j.entryPrice && (
+                      <div style={{ fontSize: 10, color: C.green, marginTop: 2 }}>
+                        +{(((j.tp2 - j.entryPrice) / j.entryPrice) * 100).toFixed(2)}% dari entry
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1085,6 +1158,76 @@ const JournalPage = ({ data, onUpdate }) => {
                 )}
 
                 {j.techniques?.length > 0 && <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 8 }}>{j.techniques.map(t => <Pill key={t}>{t}</Pill>)}</div>}
+
+                {/* Price Tracking History */}
+                {j.priceTracking?.length > 0 && (
+                  <div style={{ background: C.bg, borderRadius: 8, padding: "10px 12px", marginBottom: 10 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, marginBottom: 6 }}>📊 PRICE TRACKING HISTORY</div>
+                    {j.priceTracking.slice(-5).map((t, ti) => (
+                      <div key={ti} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, marginBottom: 4, paddingBottom: 4, borderBottom: ti < Math.min(j.priceTracking.length, 5) - 1 ? `1px solid ${C.borderLight}` : "none" }}>
+                        <div>
+                          <span style={{ color: C.textMuted }}>{t.date}</span>
+                          {t.note && <span style={{ color: C.textFaint, fontStyle: "italic" }}> · {t.note}</span>}
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <span style={{ fontWeight: 700, fontFamily: "'DM Mono',monospace" }}>RM {fmt(t.price)}</span>
+                          <span style={{ marginLeft: 8, color: t.unrealizedPL >= 0 ? C.green : C.red, fontWeight: 600 }}>
+                            {t.unrealizedPL >= 0 ? "▲ +" : "▼ "}RM {fmt(Math.abs(t.unrealizedPL))} ({t.unrealizedPct >= 0 ? "+" : ""}{t.unrealizedPct}%)
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                    {/* Latest P&L Summary */}
+                    {j.priceTracking.length > 0 && (() => {
+                      const latest = j.priceTracking[j.priceTracking.length - 1];
+                      return (
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 6, paddingTop: 6, borderTop: `1px solid ${C.border}` }}>
+                          <span style={{ fontSize: 11, fontWeight: 700 }}>Unrealized P&L (Semasa)</span>
+                          <span style={{ fontSize: 13, fontWeight: 800, fontFamily: "'DM Mono',monospace", color: latest.unrealizedPL >= 0 ? C.green : C.red }}>
+                            {latest.unrealizedPL >= 0 ? "+" : ""}RM {fmt(latest.unrealizedPL)}
+                          </span>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+
+                {/* Track Today Form */}
+                {trackIdx === i && (
+                  <div style={{ background: C.primaryLight, borderRadius: 8, padding: 12, marginBottom: 10, border: `1px solid ${C.primaryBorder}` }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: C.primary, marginBottom: 10 }}>📊 Track Harga Hari Ini</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+                      <Field label="HARGA SEMASA (RM)">
+                        <Inp type="number" step="0.001" placeholder="e.g. 0.92" value={trackF.price} onChange={e => setTrackF({...trackF, price: e.target.value})} />
+                      </Field>
+                      <Field label="TARIKH">
+                        <Inp type="date" value={trackF.date} onChange={e => setTrackF({...trackF, date: e.target.value})} />
+                      </Field>
+                      <Field label="NOTA (optional)">
+                        <Inp placeholder="Pemerhatian..." value={trackF.note} onChange={e => setTrackF({...trackF, note: e.target.value})} />
+                      </Field>
+                    </div>
+                    {/* Preview P&L */}
+                    {trackF.price && (
+                      <div style={{ background: C.surface, borderRadius: 6, padding: "8px 12px", marginBottom: 10 }}>
+                        <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 3 }}>Preview P&L:</div>
+                        {(() => {
+                          const preview = (parseFloat(trackF.price) - j.entryPrice) * (j.remainingLot || j.lot || 0);
+                          const previewPct = ((parseFloat(trackF.price) - j.entryPrice) / j.entryPrice) * 100;
+                          return (
+                            <div style={{ fontSize: 14, fontWeight: 800, color: preview >= 0 ? C.green : C.red, fontFamily: "'DM Mono',monospace" }}>
+                              {preview >= 0 ? "▲ +" : "▼ "}RM {fmt(Math.abs(preview))} ({previewPct >= 0 ? "+" : ""}{previewPct.toFixed(2)}%)
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    )}
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <Btn style={{ flex: 1 }} onClick={() => addTrack(i)}>Save Tracking</Btn>
+                      <Btn variant="ghost" onClick={() => { setTrackIdx(null); setTrackF({ price: "", note: "", date: new Date().toISOString().split("T")[0] }); }}>Cancel</Btn>
+                    </div>
+                  </div>
+                )}
 
                 {/* Partial Exit Form */}
                 {partialIdx === i && (
@@ -1142,10 +1285,11 @@ const JournalPage = ({ data, onUpdate }) => {
                   </div>
                 )}
 
-                {closeIdx !== i && partialIdx !== i && (
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <Btn variant="ghost" style={{ flex: 1 }} onClick={() => setPartialIdx(i)}>💰 Partial Exit</Btn>
-                    <Btn variant="success" style={{ flex: 1 }} onClick={() => setCloseIdx(i)}>🔒 Close Trade</Btn>
+                {closeIdx !== i && partialIdx !== i && trackIdx !== i && (
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    <Btn variant="ghost" style={{ flex: 1 }} onClick={() => { setTrackIdx(i); setPartialIdx(null); setCloseIdx(null); }}>📊 Track Today</Btn>
+                    <Btn variant="ghost" style={{ flex: 1 }} onClick={() => { setPartialIdx(i); setTrackIdx(null); setCloseIdx(null); }}>💰 Partial Exit</Btn>
+                    <Btn variant="success" style={{ flex: 1 }} onClick={() => { setCloseIdx(i); setTrackIdx(null); setPartialIdx(null); }}>🔒 Close Trade</Btn>
                     <Btn variant="danger" style={{ padding: "9px 14px" }} onClick={() => del(i)}>✕</Btn>
                   </div>
                 )}
@@ -1284,8 +1428,10 @@ const JournalPage = ({ data, onUpdate }) => {
         </div>
       )}
 
+      </>}
+
       {/* ── ADD TRADE FORM ── */}
-      {showForm && (
+      {pinUnlocked && showForm && (
         <Modal title="Add Trade Record" onClose={() => { setShowForm(false); setForm(blankForm); }}>
           {/* Pre-Trade Checklist */}
           <div style={{ background: C.primaryLight, borderRadius: 8, padding: 12, marginBottom: 14, border: `1px solid ${C.primaryBorder}` }}>
@@ -1418,6 +1564,7 @@ export default function App() {
   const [loggedIn, setLoggedIn] = useState(false);
   const [pinUnlocked, setPinUnlocked] = useState(false);
   const [showPin, setShowPin] = useState(false);
+  const [pinTarget, setPinTarget] = useState("portfolio"); // "portfolio" or "journal"
   const [page, setPage] = useState("portfolio");
   const [data, setData] = useState(() => loadData() || defaultData());
 
@@ -1481,12 +1628,12 @@ export default function App() {
             <div style={{ fontSize: 13, fontWeight: 800, fontFamily: "'DM Mono',monospace", color: C.primary }}>RM {Number(data.settings?.modal || 0).toLocaleString()}</div>
           </div>
         </div>
-        {page === "portfolio" && <PortfolioPage data={data} onUpdate={setData} pinUnlocked={pinUnlocked} onRequestPin={() => setShowPin(true)} />}
+        {page === "portfolio" && <PortfolioPage data={data} onUpdate={setData} pinUnlocked={pinUnlocked} onRequestPin={() => { setPinTarget("portfolio"); setShowPin(true); }} />}
         {page === "watchlist" && <WatchlistPage data={data} onUpdate={setData} />}
         {page === "technical" && <TechnicalPage data={data} onUpdate={setData} />}
         {page === "hunting"   && <HuntingPage   data={data} onUpdate={setData} />}
-        {page === "journal"   && <JournalPage   data={data} onUpdate={setData} />}
-        {page === "settings"  && <SettingsPage  data={data} onUpdate={setData} onLogout={() => { setLoggedIn(false); setPinUnlocked(false); }} />}
+        {page === "journal"   && <JournalPage   data={data} onUpdate={setData} pinUnlocked={pinUnlocked} onRequestPin={() => { setPinTarget("journal"); setShowPin(true); }} />}
+        {page === "settings"  && <SettingsPage  data={data} onUpdate={setData} onLogout={() => { setLoggedIn(false); setPinUnlocked(false); setPinTarget("portfolio"); }} />}
       </main>
 
       {showPin && <PinScreen savedPin={data.settings?.pin || "1234"} onUnlock={() => { setPinUnlocked(true); setShowPin(false); }} onCancel={() => setShowPin(false)} />}
