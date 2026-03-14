@@ -315,8 +315,13 @@ const PortfolioPage = ({ data, onUpdate, pinUnlocked, onRequestPin }) => {
                   <span style={{ fontSize: 11, color: C.textFaint }}>RM</span>
                 </div>
                 {s.note && <div style={{ fontSize: 11, color: C.textMuted, fontStyle: "italic", marginBottom: 8 }}>📝 {s.note}</div>}
-                <div style={{ display: "flex", gap: 8 }}>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <Btn variant="ghost" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => edit(i)}>Edit</Btn>
+                  <Btn variant="primary" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => {
+                    const ji = { id: Date.now(), code: s.code, name: s.name, sector: s.sector, entryPrice: s.buyPrice, sl: "", tp: "", lot: s.unit, entryDate: s.date || new Date().toISOString().split("T")[0], techniques: [], note: s.note || "", status: "Open" };
+                    onUpdate({ ...data, journal: [ji, ...(data.journal || [])] });
+                    alert(`${s.code} added to Trading Journal! ✅`);
+                  }}>📒 Add to Journal</Btn>
                   <Btn variant="danger" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => del(i)}>Delete</Btn>
                 </div>
               </div>
@@ -421,8 +426,13 @@ const WatchlistPage = ({ data, onUpdate }) => {
                 </div>
               ) : null}
               {w.note && <div style={{ fontSize: 11, color: C.textMuted, fontStyle: "italic", marginBottom: 8 }}>📝 {w.note}</div>}
-              <div style={{ display: "flex", gap: 8 }}>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <Btn variant="ghost" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => setTrackIdx(trackIdx === i ? null : i)}>+ Track Today</Btn>
+                <Btn variant="primary" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => {
+                  const ji = { id: Date.now(), code: w.code, name: w.name, sector: w.sector, entryPrice: w.lastPrice || w.targetBuy || "", sl: w.targetSL || "", tp: "", lot: "", entryDate: new Date().toISOString().split("T")[0], techniques: [], note: w.note || "", status: "Open" };
+                  onUpdate({ ...data, journal: [ji, ...(data.journal || [])] });
+                  alert(`${w.code} added to Trading Journal! ✅`);
+                }}>📒 Add to Journal</Btn>
                 <Btn variant="danger" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => del(i)}>Remove</Btn>
               </div>
             </div>
@@ -607,6 +617,9 @@ const TechnicalPage = ({ data, onUpdate }) => {
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <Pill color={a.result?.signal === "BUY" ? C.green : a.result?.signal === "WATCH" ? C.amber : C.textMuted} bg={a.result?.signal === "BUY" ? C.greenLight : a.result?.signal === "WATCH" ? C.amberLight : C.bg}>{a.result?.signal || "—"}</Pill>
+                    {a.result?.signal !== "WAIT" && a.result?.signal !== "N/A" && (
+                      <Btn variant="success" style={{ padding: "5px 10px", fontSize: 11 }} onClick={() => addToHunting(a)}>🎯</Btn>
+                    )}
                     <Btn variant="ghost" style={{ padding: "5px 10px", fontSize: 11 }} onClick={() => edit(i)}>✏️</Btn>
                     <Btn variant="danger" style={{ padding: "5px 10px", fontSize: 11 }} onClick={() => del(i)}>✕</Btn>
                   </div>
