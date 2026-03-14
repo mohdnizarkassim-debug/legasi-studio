@@ -474,23 +474,80 @@ const TechnicalPage = ({ data, onUpdate }) => {
 
   const runAnalysis = (f) => {
     const o = +f.open, h = +f.high, l = +f.low, c = +f.close;
-    const vol = +f.currentVol || +f.volume, smaVol = +f.sma20vol, ema200 = +f.ema200;
-    const modal = +f.modal, rrr = +f.rrr;
+    const vol = +f.volume, smaVol = +f.sma20vol, ema200 = +f.ema200;
+    const modal = +f.modal, rrr = +f.rrr || 3;
+    
+    let score = 0;
     const checks = {};
-    if (o && h && l && c) {
-      const body = Math.abs(c - o), range = h - l;
-      checks.marubozu = { label: "Marubozu (Body > 90%)", pass: range > 0 && (body/range)*100 >= 90, value: range > 0 ? ((body/range)*100).toFixed(1) + "%" : "—" };
+    const remarks = [];
+
+    // ── STEP 1: TREND FILTER (EMA 200) ──
+    // Kalau gagal → STOP terus, tak check lain
+    if (!ema200 || !c) {
+      checks.ema200 = { label: "TREND: Close > EMA 200", pass: false, value: "Data tidak lengkap", score: 0 };
+    } else if (c > ema200) {
+      score += 1;
+      checks.ema200 = { label: "TREND: Close > EMA 200", pass: true, value: `${c} > ${ema200} ✓`, score: 1 };
+      remarks.push("TREND: Lulus (Di atas EMA 200)");
+    } else {
+      checks.ema200 = { label: "TREND: Close > EMA 200", pass: false, value: `${c} < ${ema200} — GAGAL`, score: 0 };
+      remarks.push("TREND: Gagal (Di bawah EMA 200) — STOP");
+      // STOP — trend gagal, return terus
+      return { checks, score: 0, signal: "WAIT", remarks, sl: l - 0.01, tp: 0, riskPct: 0, tpPct: 0, lotSize: 0, rrr, trendFailed: true };
     }
-    if (ema200 && c) checks.ema200 = { label: "Close > EMA 200", pass: c > ema200, value: `${c} vs ${ema200}` };
-    if (vol && smaVol) checks.volume = { label: "Volume > 2x SMA20 Vol", pass: vol > smaVol * 2, value: `${(vol/smaVol).toFixed(1)}x` };
-    const sl = l || 0, risk = c - sl, tp = c + (risk * rrr);
+
+    // ── STEP 2: VOLUME SURGE (SMA 20) ──
+    if (vol && smaVol) {
+      const volRatio = vol / smaVol;
+      if (volRatio >= 2.0) {
+        score += 2;
+        checks.volume = { label: "VOLUME: Surge > 2x SMA20", pass: true, value: `${volRatio.toFixed(2)}x — Sangat Kuat 🔥`, score: 2 };
+        remarks.push(`VOLUME: Sangat Kuat (${volRatio.toFixed(2)}x)`);
+      } else if (volRatio >= 1.5) {
+        score += 1;
+        checks.volume = { label: "VOLUME: Surge >= 1.5x SMA20", pass: true, value: `${volRatio.toFixed(2)}x — Kuat`, score: 1 };
+        remarks.push(`VOLUME: Kuat (${volRatio.toFixed(2)}x)`);
+      } else {
+        checks.volume = { label: "VOLUME: Surge < 1.5x SMA20", pass: false, value: `${volRatio.toFixed(2)}x — Lemah`, score: 0 };
+        remarks.push("VOLUME: Lemah");
+      }
+    }
+
+    // ── STEP 3: BULLISH MARUBOZU ──
+    if (o && h && l && c) {
+      const candleRange = h - l;
+      const bodyRange = Math.abs(c - o);
+      const bodyPct = candleRange > 0 ? (bodyRange / candleRange) * 100 : 0;
+      const isBullish = c > o;
+
+      if (bodyPct >= 90 && isBullish) {
+        score += 2;
+        checks.marubozu = { label: "CANDLE: Bullish Marubozu", pass: true, value: `${bodyPct.toFixed(1)}% — Marubozu ✓`, score: 2 };
+        remarks.push(`CANDLE: Bullish Marubozu (${bodyPct.toFixed(1)}%)`);
+      } else if (isBullish) {
+        checks.marubozu = { label: "CANDLE: Bullish Marubozu", pass: false, value: `${bodyPct.toFixed(1)}% — Normal Bullish`, score: 0 };
+        remarks.push(`CANDLE: Normal Bullish (${bodyPct.toFixed(1)}%)`);
+      } else {
+        checks.marubozu = { label: "CANDLE: Bullish Marubozu", pass: false, value: `${bodyPct.toFixed(1)}% — Bearish`, score: 0 };
+        remarks.push("CANDLE: Bearish — tidak layak");
+      }
+    }
+
+    // ── STEP 4: RISK MANAGEMENT ──
+    // SL = Low - 0.01 (1 bid bawah low)
+    const sl = l - 0.01;
+    const risk = c - sl;
+    const tp = c + (risk * rrr);
     const riskPct = c > 0 ? ((c - sl) / c) * 100 : 0;
     const tpPct = c > 0 ? ((tp - c) / c) * 100 : 0;
     const lotSize = risk > 0 ? Math.floor((modal * 0.20) / risk / 100) * 100 : 0;
-    const passes = Object.values(checks).filter(v => v?.pass).length;
-    const total = Object.values(checks).filter(v => v).length;
-    const signal = total === 0 ? "N/A" : passes === total ? "BUY" : passes >= total * 0.6 ? "WATCH" : "WAIT";
-    return { checks, sl, tp, risk, riskPct, tpPct, lotSize, signal, rrr };
+
+    // ── STEP 5: FINAL SIGNAL ──
+    let signal = "WAIT";
+    if (score >= 4) signal = "STRONG BUY";
+    else if (score >= 2) signal = "BUY";
+
+    return { checks, score, signal, remarks, sl: +sl.toFixed(3), tp: +tp.toFixed(3), risk, riskPct, tpPct, lotSize, rrr, trendFailed: false };
   };
 
   const save = () => {
@@ -538,10 +595,16 @@ const TechnicalPage = ({ data, onUpdate }) => {
               <div style={{ fontSize: 20, fontWeight: 800 }}>{sel.code}</div>
               <div style={{ fontSize: 12, color: C.textMuted }}>{sel.name} · {sel.date}</div>
             </div>
-            <Pill color={sel.result?.signal === "BUY" ? C.green : sel.result?.signal === "WATCH" ? C.amber : C.textMuted}
-              bg={sel.result?.signal === "BUY" ? C.greenLight : sel.result?.signal === "WATCH" ? C.amberLight : C.bg}>
-              {sel.result?.signal === "BUY" ? "🟢 BUY" : sel.result?.signal === "WATCH" ? "🟡 WATCH" : "⚪ WAIT"}
-            </Pill>
+            <div style={{ textAlign: "right" }}>
+              <Pill
+                color={sel.result?.signal === "STRONG BUY" ? "#fff" : sel.result?.signal === "BUY" ? C.green : C.textMuted}
+                bg={sel.result?.signal === "STRONG BUY" ? C.green : sel.result?.signal === "BUY" ? C.greenLight : C.bg}>
+                {sel.result?.signal === "STRONG BUY" ? "🔥 STRONG BUY" : sel.result?.signal === "BUY" ? "🟢 BUY" : "⚪ WAIT"}
+              </Pill>
+              {sel.result?.score !== undefined && (
+                <div style={{ fontSize: 10, color: C.textFaint, marginTop: 3 }}>Score: {sel.result.score}/5</div>
+              )}
+            </div>
           </div>
 
           {/* OHLCV */}
@@ -554,14 +617,31 @@ const TechnicalPage = ({ data, onUpdate }) => {
             ))}
           </div>
 
+          {/* Trend Failed Warning */}
+          {sel.result?.trendFailed && (
+            <div style={{ background: "#FEF2F2", border: `1px solid #FECACA`, borderRadius: 10, padding: "12px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 18 }}>🚫</span>
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 800, color: C.red }}>ANALISIS DIHENTIKAN</div>
+                <div style={{ fontSize: 11, color: C.red }}>Harga tutup di bawah EMA 200 — kaunter tidak layak.</div>
+              </div>
+            </div>
+          )}
+
           {/* Checks */}
           {sel.result?.checks && (
             <div style={{ marginBottom: 14 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, marginBottom: 8 }}>ANALYSIS CRITERIA</div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted }}>ANALYSIS CRITERIA</div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.primary }}>SCORE: {sel.result.score}/5</div>
+              </div>
               {Object.values(sel.result.checks).map((c, ci) => c && (
-                <div key={ci} style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: c.pass ? C.greenLight : C.redLight, borderRadius: 7, marginBottom: 5 }}>
+                <div key={ci} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "9px 12px", background: c.pass ? C.greenLight : C.redLight, borderRadius: 7, marginBottom: 5 }}>
                   <span style={{ fontSize: 12, fontWeight: 600 }}>{c.label}</span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: c.pass ? C.green : C.red }}>{c.pass ? "✓" : "✗"} {c.value}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    {c.score > 0 && <span style={{ fontSize: 10, background: C.green, color: "#fff", borderRadius: 10, padding: "2px 7px", fontWeight: 700 }}>+{c.score}</span>}
+                    <span style={{ fontSize: 12, fontWeight: 700, color: c.pass ? C.green : C.red }}>{c.pass ? "✓" : "✗"} {c.value}</span>
+                  </div>
                 </div>
               ))}
             </div>
@@ -590,7 +670,7 @@ const TechnicalPage = ({ data, onUpdate }) => {
           {sel.note && <div style={{ fontSize: 12, color: C.textMuted, fontStyle: "italic", marginBottom: 12 }}>📝 {sel.note}</div>}
 
           <div style={{ display: "flex", gap: 8 }}>
-            {sel.result?.signal !== "WAIT" && sel.result?.signal !== "N/A" && (
+            {(sel.result?.signal === "STRONG BUY" || sel.result?.signal === "BUY") && (
               <Btn variant="success" style={{ flex: 1 }} onClick={() => addToHunting(sel)}>🎯 Add to Hunting List</Btn>
             )}
             <Btn variant="ghost" onClick={() => edit(selIdx)}>✏️ Edit</Btn>
@@ -616,8 +696,13 @@ const TechnicalPage = ({ data, onUpdate }) => {
                     </div>
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <Pill color={a.result?.signal === "BUY" ? C.green : a.result?.signal === "WATCH" ? C.amber : C.textMuted} bg={a.result?.signal === "BUY" ? C.greenLight : a.result?.signal === "WATCH" ? C.amberLight : C.bg}>{a.result?.signal || "—"}</Pill>
-                    {a.result?.signal !== "WAIT" && a.result?.signal !== "N/A" && (
+                    <Pill
+                      color={a.result?.signal === "STRONG BUY" ? "#fff" : a.result?.signal === "BUY" ? C.green : C.textMuted}
+                      bg={a.result?.signal === "STRONG BUY" ? C.green : a.result?.signal === "BUY" ? C.greenLight : C.bg}>
+                      {a.result?.signal === "STRONG BUY" ? "🔥 STRONG BUY" : a.result?.signal === "BUY" ? "🟢 BUY" : "⚪ WAIT"}
+                    </Pill>
+                    {a.result?.score !== undefined && <span style={{ fontSize: 10, color: C.textFaint }}>{a.result.score}/5</span>}
+                    {(a.result?.signal === "STRONG BUY" || a.result?.signal === "BUY") && (
                       <Btn variant="success" style={{ padding: "5px 10px", fontSize: 11 }} onClick={() => addToHunting(a)}>🎯</Btn>
                     )}
                     <Btn variant="ghost" style={{ padding: "5px 10px", fontSize: 11 }} onClick={() => edit(i)}>✏️</Btn>
