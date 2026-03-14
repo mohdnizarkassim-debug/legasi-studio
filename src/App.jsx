@@ -261,12 +261,27 @@ const PortfolioPage = ({ data, onUpdate, pinUnlocked, onRequestPin }) => {
   const totalPLPct = totalCost > 0 ? (totalPL / totalCost) * 100 : 0;
 
   const save = () => {
-    if (!form.code || !form.unit || !form.buyPrice) return;
-    const item = { ...form, unit: +form.unit, buyPrice: +form.buyPrice, currentPrice: +(form.currentPrice || form.buyPrice), id: Date.now() };
+    // Validation
+    if (!form.code) { alert("⚠️ Sila masukkan Stock Code!"); return; }
+    if (!form.unit || isNaN(form.unit) || +form.unit <= 0) { alert("⚠️ Sila masukkan jumlah unit yang sah!"); return; }
+    if (!form.buyPrice || isNaN(form.buyPrice) || +form.buyPrice <= 0) { alert("⚠️ Sila masukkan harga beli yang sah!"); return; }
+    const item = {
+      ...form,
+      code: form.code.toUpperCase().trim(),
+      unit: +form.unit,
+      buyPrice: +form.buyPrice,
+      currentPrice: form.currentPrice && +form.currentPrice > 0 ? +form.currentPrice : +form.buyPrice,
+      id: editIdx !== null ? (portfolio[editIdx]?.id || Date.now()) : Date.now(),
+    };
     const updated = [...portfolio];
-    editIdx !== null ? updated[editIdx] = { ...updated[editIdx], ...item } : updated.push(item);
+    if (editIdx !== null) {
+      updated[editIdx] = { ...updated[editIdx], ...item };
+    } else {
+      updated.push(item);
+    }
     onUpdate({ ...data, portfolio: updated });
     setShowForm(false); setEditIdx(null); setForm(blankForm);
+    alert(`✅ ${item.code} berjaya ${editIdx !== null ? "dikemaskini" : "ditambah"} dalam Portfolio!`);
   };
 
   const del = (i) => { if (!window.confirm("Delete this holding?")) return; onUpdate({ ...data, portfolio: portfolio.filter((_, x) => x !== i) }); };
@@ -1046,45 +1061,95 @@ const JournalPage = ({ data, onUpdate, pinUnlocked, onRequestPin }) => {
   });
 
   const save = () => {
-    if (!form.code || !form.entryPrice) return;
+    // Validation
+    if (!form.code) { alert("⚠️ Sila masukkan Stock Code!"); return; }
+    if (!form.entryPrice || isNaN(form.entryPrice) || +form.entryPrice <= 0) { alert("⚠️ Sila masukkan Entry Price yang sah!"); return; }
+    if (!form.lot || isNaN(form.lot) || +form.lot <= 0) { alert("⚠️ Sila masukkan Lot Size yang sah!"); return; }
+    if (!form.sl || isNaN(form.sl) || +form.sl <= 0) { alert("⚠️ Sila masukkan Stop Loss!"); return; }
+    if (parseFloat(form.sl) >= parseFloat(form.entryPrice)) { alert("⚠️ Stop Loss mesti lebih rendah dari Entry Price!"); return; }
     const entry = parseFloat(form.entryPrice);
-    const sl = parseFloat(form.sl) || 0;
-    const risk = sl > 0 ? entry - sl : 0;
-    // Auto calculate TP1 (1:2) dan TP2 (1:3) kalau kosong
+    const sl = parseFloat(form.sl);
+    const risk = entry - sl;
+    const rrr = parseFloat(form.rrr || 3);
     const tp1 = form.tp1 && +form.tp1 > 0 ? +form.tp1 : risk > 0 ? +(entry + (risk * 2)).toFixed(3) : 0;
-    const tp2 = form.tp2 && +form.tp2 > 0 ? +form.tp2 : risk > 0 ? +(entry + (risk * parseFloat(form.rrr || 3))).toFixed(3) : 0;
-    const item = { ...form, id: Date.now(), entryPrice: entry, sl, tp1, tp2, lot: +form.lot, status: "Open", partialExits: [], totalPL: 0 };
+    const tp2 = form.tp2 && +form.tp2 > 0 ? +form.tp2 : risk > 0 ? +(entry + (risk * rrr)).toFixed(3) : 0;
+    const item = {
+      ...form,
+      id: Date.now(),
+      code: form.code.toUpperCase().trim(),
+      entryPrice: entry, sl, tp1, tp2,
+      lot: +form.lot,
+      status: "Open",
+      partialExits: [], totalPL: 0,
+      priceTracking: [],
+    };
     onUpdate({ ...data, journal: [item, ...journal] });
     setShowForm(false); setForm(blankForm);
+    alert(`✅ Trade ${item.code} berjaya direkodkan dalam Journal!`);
   };
 
   const doPartialExit = (i) => {
-    if (!partialF.price || !partialF.lot) return;
+    // Validation
+    if (!partialF.price || isNaN(partialF.price) || +partialF.price <= 0) {
+      alert("⚠️ Sila masukkan Exit Price yang sah!"); return;
+    }
+    if (!partialF.lot || isNaN(partialF.lot) || +partialF.lot <= 0) {
+      alert("⚠️ Sila masukkan jumlah lot yang sah!"); return;
+    }
     const j = journal[i];
+    const remLot = (j.remainingLot !== undefined && j.remainingLot > 0) ? j.remainingLot : parseFloat(j.lot) || 0;
+    if (+partialF.lot > remLot) {
+      alert(`⚠️ Lot melebihi remaining lot (${remLot} unit)!`); return;
+    }
     const pLot = +partialF.lot;
     const pPrice = +partialF.price;
     const pPL = (pPrice - j.entryPrice) * pLot;
-    const exits = [...(j.partialExits||[]), { price: pPrice, lot: pLot, date: partialF.date, pl: pPL }];
-    const totalExitedLot = exits.reduce((a,e)=>a+e.lot,0);
-    const totalPLSoFar = exits.reduce((a,e)=>a+e.pl,0);
-    const u = [...journal];
-    u[i] = { ...j, partialExits: exits, totalPL: totalPLSoFar, remainingLot: (j.lot - totalExitedLot) };
-    onUpdate({ ...data, journal: u });
-    setPartialIdx(null); setPartialF({ price: "", lot: "", date: new Date().toISOString().split("T")[0] });
+    const exits = [...(j.partialExits||[]), { price: pPrice, lot: pLot, date: partialF.date, pl: +pPL.toFixed(2) }];
+    const totalExitedLot = exits.reduce((a,e)=>a+e.lot, 0);
+    const totalPLSoFar = exits.reduce((a,e)=>a+e.pl, 0);
+    const remaining = parseFloat(j.lot) - totalExitedLot;
+    const updated = [...journal];
+    updated[i] = { ...j, partialExits: exits, totalPL: +totalPLSoFar.toFixed(2), remainingLot: remaining };
+    onUpdate({ ...data, journal: updated });
+    setPartialIdx(null);
+    setPartialF({ price: "", lot: "", date: new Date().toISOString().split("T")[0] });
+    alert(`✅ Partial exit berjaya!\nDijual: ${pLot.toLocaleString()} unit @ RM ${fmt(pPrice)}\nP&L: ${pPL >= 0 ? "+" : ""}RM ${pPL.toFixed(2)}\nRemaining: ${remaining.toLocaleString()} unit`);
   };
 
   const closeTrade = (i) => {
-    if (!exitF.exitPrice) return;
+    // Validation
+    if (!exitF.exitPrice || isNaN(parseFloat(exitF.exitPrice))) {
+      alert("⚠️ Sila masukkan Exit Price yang sah!");
+      return;
+    }
+    if (!exitF.exitReason) {
+      alert("⚠️ Sila pilih sebab keluar trade!");
+      return;
+    }
     const j = journal[i];
-    const ep = +exitF.exitPrice;
-    const remLot = j.remainingLot !== undefined ? j.remainingLot : j.lot;
-    const finalPL = (ep - j.entryPrice) * remLot;
-    const totalPLFinal = (j.totalPL || 0) + finalPL;
-    const plPct = ((ep - j.entryPrice) / j.entryPrice) * 100;
-    const u = [...journal];
-    u[i] = { ...j, exitPrice: ep, exitDate: exitF.exitDate, exitReason: exitF.exitReason, exitNote: exitF.exitNote, postMortem: exitF.postMortem, totalPL: totalPLFinal, pl: totalPLFinal, plPct, status: "Closed" };
-    onUpdate({ ...data, journal: u });
-    setCloseIdx(null); setExitF({ exitPrice: "", exitDate: new Date().toISOString().split("T")[0], exitNote: "", exitReason: "", postMortem: { whatWorked: "", whatFailed: "", lesson: "" } });
+    if (!j) { alert("Trade tidak dijumpai!"); return; }
+    const ep = parseFloat(exitF.exitPrice);
+    const remLot = (j.remainingLot !== undefined && j.remainingLot > 0) ? j.remainingLot : parseFloat(j.lot) || 0;
+    const finalPL = (ep - parseFloat(j.entryPrice)) * remLot;
+    const totalPLFinal = (parseFloat(j.totalPL) || 0) + finalPL;
+    const plPct = j.entryPrice > 0 ? ((ep - j.entryPrice) / j.entryPrice) * 100 : 0;
+    const updated = [...journal];
+    updated[i] = {
+      ...j,
+      exitPrice: ep,
+      exitDate: exitF.exitDate || new Date().toISOString().split("T")[0],
+      exitReason: exitF.exitReason,
+      exitNote: exitF.exitNote,
+      postMortem: exitF.postMortem || { whatWorked: "", whatFailed: "", lesson: "" },
+      totalPL: +totalPLFinal.toFixed(2),
+      pl: +totalPLFinal.toFixed(2),
+      plPct: +plPct.toFixed(2),
+      status: "Closed",
+    };
+    onUpdate({ ...data, journal: updated });
+    setCloseIdx(null);
+    setExitF({ exitPrice: "", exitDate: new Date().toISOString().split("T")[0], exitNote: "", exitReason: "", postMortem: { whatWorked: "", whatFailed: "", lesson: "" } });
+    alert(`✅ Trade ${j.code} berjaya ditutup!\nP&L: ${totalPLFinal >= 0 ? "+" : ""}RM ${totalPLFinal.toFixed(2)}`);
   };
 
   const del = (i) => { if (!window.confirm("Delete trade record?")) return; onUpdate({ ...data, journal: journal.filter((_,x)=>x!==i) }); };
