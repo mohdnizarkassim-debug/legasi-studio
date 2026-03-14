@@ -314,6 +314,30 @@ const PortfolioPage = ({ data, onUpdate, pinUnlocked, onRequestPin }) => {
                   <input type="number" defaultValue={s.currentPrice || s.buyPrice} step="0.01" onBlur={e => updatePrice(i, e.target.value)} style={{ ...inp, padding: "6px 10px", width: 90, fontSize: 12 }} />
                   <span style={{ fontSize: 11, color: C.textFaint }}>RM</span>
                 </div>
+                {/* SL TP1 TP2 from Analysis */}
+                {(s.sl || s.tp1 || s.tp2) && (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+                    {s.sl > 0 && (
+                      <div style={{ background: C.redLight, borderRadius: 7, padding: "6px 10px", textAlign: "center" }}>
+                        <div style={{ fontSize: 9, color: C.red, fontWeight: 600 }}>STOP LOSS</div>
+                        <div style={{ fontSize: 12, fontWeight: 700, fontFamily: "'DM Mono',monospace", color: C.red }}>RM {fmt(s.sl)}</div>
+                      </div>
+                    )}
+                    {s.tp1 > 0 && (
+                      <div style={{ background: C.greenLight, borderRadius: 7, padding: "6px 10px", textAlign: "center" }}>
+                        <div style={{ fontSize: 9, color: C.green, fontWeight: 600 }}>TP1 (50%)</div>
+                        <div style={{ fontSize: 12, fontWeight: 700, fontFamily: "'DM Mono',monospace", color: C.green }}>RM {fmt(s.tp1)}</div>
+                      </div>
+                    )}
+                    {s.tp2 > 0 && (
+                      <div style={{ background: "#D1FAE5", borderRadius: 7, padding: "6px 10px", textAlign: "center" }}>
+                        <div style={{ fontSize: 9, color: C.green, fontWeight: 600 }}>TP2 (Trail)</div>
+                        <div style={{ fontSize: 12, fontWeight: 700, fontFamily: "'DM Mono',monospace", color: C.green }}>RM {fmt(s.tp2)}</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* Broker & Catatan */}
                 <div style={{ display: "flex", gap: 16, marginBottom: 8, flexWrap: "wrap" }}>
                   {s.broker && (
@@ -331,10 +355,35 @@ const PortfolioPage = ({ data, onUpdate, pinUnlocked, onRequestPin }) => {
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <Btn variant="ghost" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => edit(i)}>Edit</Btn>
                   <Btn variant="primary" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => {
-                    const ji = { id: Date.now(), code: s.code, name: s.name, sector: s.sector, entryPrice: s.buyPrice, sl: "", tp: "", lot: s.unit, entryDate: s.date || new Date().toISOString().split("T")[0], techniques: [], note: s.note || "", status: "Open" };
+                    const entry = parseFloat(s.buyPrice) || 0;
+                    const sl = parseFloat(s.sl) || 0;
+                    const risk = entry - sl;
+                    const rrr = parseFloat(s.rrr) || 3;
+                    // Use existing TP1/TP2 or auto-calculate
+                    const tp1 = s.tp1 && +s.tp1 > 0 ? +s.tp1 : risk > 0 ? +(entry + (risk * 2)).toFixed(3) : 0;
+                    const tp2 = s.tp2 && +s.tp2 > 0 ? +s.tp2 : risk > 0 ? +(entry + (risk * rrr)).toFixed(3) : 0;
+                    const ji = {
+                      id: Date.now(),
+                      code: s.code, name: s.name, sector: s.sector,
+                      entryPrice: entry,
+                      sl, tp1, tp2, rrr,
+                      lot: parseFloat(s.unit) || 0,
+                      entryDate: s.date || new Date().toISOString().split("T")[0],
+                      techniques: s.techniques || [],
+                      broker: s.broker || "",
+                      catatan: s.catatan || "",
+                      note: s.note || "",
+                      marketCondition: "",
+                      tradeType: "",
+                      status: "Open",
+                      partialExits: [],
+                      totalPL: 0,
+                      checklist: [],
+                      priceTracking: [],
+                    };
                     onUpdate({ ...data, journal: [ji, ...(data.journal || [])] });
-                    alert(`${s.code} added to Trading Journal! ✅`);
-                  }}>📒 Add to Journal</Btn>
+                    alert(`${s.code} berjaya masuk Trading Journal! ✅\n\nSemua data portfolio telah dipindahkan.`);
+                  }}>📒 Bawa ke Journal</Btn>
                   <Btn variant="danger" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => del(i)}>Delete</Btn>
                 </div>
               </div>
@@ -446,16 +495,18 @@ const WatchlistPage = ({ data, onUpdate }) => {
               {w.note && <div style={{ fontSize: 11, color: C.textMuted, fontStyle: "italic", marginBottom: 8 }}>📝 {w.note}</div>}
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                 <Btn variant="ghost" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => setTrackIdx(trackIdx === i ? null : i)}>+ Track Today</Btn>
-                <Btn variant="primary" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => {
-                  const entry = parseFloat(w.lastPrice || w.targetBuy || 0);
-                  const sl = parseFloat(w.targetSL || 0);
-                  const risk = entry - sl;
-                  const tp1 = risk > 0 ? +(entry + (risk * 2)).toFixed(3) : 0;
-                  const tp2 = risk > 0 ? +(entry + (risk * 3)).toFixed(3) : 0;
-                  const ji = { id: Date.now(), code: w.code, name: w.name, sector: w.sector, entryPrice: entry, sl, tp1, tp2, lot: "", rrr: 3, entryDate: new Date().toISOString().split("T")[0], techniques: [], note: w.note || "", status: "Open", partialExits: [], totalPL: 0 };
-                  onUpdate({ ...data, journal: [ji, ...(data.journal || [])] });
-                  alert(`${w.code} added to Trading Journal! ✅`);
-                }}>📒 Add to Journal</Btn>
+                <Btn variant="ghost" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => {
+                  // Move from Watchlist to Hunting List
+                  const item = {
+                    id: Date.now(), code: w.code, name: w.name, sector: w.sector,
+                    entry: w.targetBuy || w.lastPrice || "", sl: w.targetSL || "",
+                    tp: "", lot: "", rrr: "3", signal: "WATCH",
+                    date: new Date().toISOString().split("T")[0],
+                    status: "Pending", note: w.note || "", techniques: [],
+                  };
+                  onUpdate({ ...data, huntingList: [item, ...(data.huntingList || [])] });
+                  alert(`${w.code} dipindahkan ke Hunting List! ✅`);
+                }}>🎯 Bawa ke Hunting</Btn>
                 <Btn variant="danger" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => del(i)}>Remove</Btn>
               </div>
             </div>
@@ -805,21 +856,24 @@ const HuntingPage = ({ data, onUpdate }) => {
     const sl = parseFloat(h.sl) || 0;
     const risk = entry - sl;
     const rrr = parseFloat(h.rrr) || 3;
-    // Auto calculate TP1 (1:2) dan TP2 (1:RRR)
     const tp1 = h.tp ? parseFloat(h.tp) : risk > 0 ? +(entry + (risk * 2)).toFixed(3) : 0;
     const tp2 = risk > 0 ? +(entry + (risk * rrr)).toFixed(3) : h.tp ? parseFloat(h.tp) : 0;
-    const ji = {
-      id: Date.now(), code: h.code, name: h.name, sector: h.sector,
-      entryPrice: entry, sl, tp1, tp2,
-      lot: parseFloat(h.lot) || 0, rrr,
-      techniques: h.techniques || [], note: h.note || "",
-      entryDate: new Date().toISOString().split("T")[0],
-      exitPrice: "", exitDate: "", status: "Open",
-      partialExits: [], totalPL: 0,
+    // Add to Portfolio with hunting data pre-filled
+    // User will complete the details in Portfolio
+    const portfolioItem = {
+      id: Date.now(),
+      code: h.code, name: h.name, sector: h.sector,
+      unit: h.lot || "", buyPrice: entry,
+      currentPrice: entry,
+      date: new Date().toISOString().split("T")[0],
+      broker: "", catatan: h.note || "",
+      note: `Dari Hunting List — Signal: ${h.signal || "BUY"}`,
+      sl, tp1, tp2, rrr, techniques: h.techniques || [],
+      fromHunting: true, // flag untuk tunjuk dari hunting
     };
     const u = [...hunting]; u[i] = { ...h, status: "Executed" };
-    onUpdate({ ...data, huntingList: u, journal: [ji, ...(data.journal || [])] });
-    alert(`${h.code} moved to Trading Journal! ✅`);
+    onUpdate({ ...data, huntingList: u, portfolio: [portfolioItem, ...(data.portfolio || [])] });
+    alert(`${h.code} berjaya masuk My Portfolio! ✅\n\nSila lengkapkan maklumat lot dan broker anda.`);
   };
 
   const skip = (i) => { const u = [...hunting]; u[i] = { ...u[i], status: "Skipped" }; onUpdate({ ...data, huntingList: u }); };
@@ -1055,7 +1109,15 @@ const JournalPage = ({ data, onUpdate, pinUnlocked, onRequestPin }) => {
       {pinUnlocked && <>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <h1 style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.4px" }}>📒 Trading Journal</h1>
-        <Btn onClick={() => setShowForm(true)}>+ Add Trade</Btn>
+        <Btn variant="ghost" style={{ fontSize: 11 }} onClick={() => setShowForm(true)}>+ Manual Entry</Btn>
+      </div>
+      {/* Flow reminder */}
+      <div style={{ background: C.primaryLight, borderRadius: 10, padding: "10px 14px", marginBottom: 14, border: `1px solid ${C.primaryBorder}`, display: "flex", gap: 10, alignItems: "center" }}>
+        <span style={{ fontSize: 16 }}>💡</span>
+        <div style={{ fontSize: 11, color: C.primary }}>
+          <strong>Flow:</strong> Analisis → Hunting List → My Portfolio → <strong>Trading Journal</strong><br/>
+          Saham masuk Journal bila kau klik <strong>"📒 Bawa ke Journal"</strong> dari My Portfolio.
+        </div>
       </div>
 
       {/* Consecutive Loss Warning */}
