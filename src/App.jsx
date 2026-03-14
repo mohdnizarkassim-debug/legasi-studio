@@ -1,569 +1,1066 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 
 // ============================================================
-// PORTFOLIO — Edit unit & harga beli ikut portfolio sebenar kau
+// CONSTANTS
 // ============================================================
-const MY_PORTFOLIO = [
-  { code: "1155.KL", display: "MAYBANK",  exchange: "KLSE", unit: 1000, beliPrice: 9.20,  name: "Malayan Banking Bhd",   sector: "Banking"   },
-  { code: "1295.KL", display: "PBBANK",   exchange: "KLSE", unit: 2000, beliPrice: 4.10,  name: "Public Bank Bhd",        sector: "Banking"   },
-  { code: "1023.KL", display: "CIMB",     exchange: "KLSE", unit: 1500, beliPrice: 7.50,  name: "CIMB Group Holdings",    sector: "Banking"   },
-  { code: "5347.KL", display: "TENAGA",   exchange: "KLSE", unit: 500,  beliPrice: 11.00, name: "Tenaga Nasional Bhd",    sector: "Utilities" },
-];
+const APP_PASSWORD = "legasi2026";
+const STORAGE_KEY = "legasi_studio_v2";
 
-// ============================================================
-// FALLBACK DATA
-// ============================================================
-const FALLBACK = {
-  "1155.KL": { price: 9.52,  change: 0.12,  pct: 1.28,  pe: 12.3, dy: 5.8, roe: 11.2, high: 10.20, low: 8.60,  volume: "12.3M" },
-  "1295.KL": { price: 4.21,  change: -0.03, pct: -0.71, pe: 13.1, dy: 4.2, roe: 13.5, high: 4.80,  low: 3.90,  volume: "8.7M"  },
-  "1023.KL": { price: 7.85,  change: 0.15,  pct: 1.95,  pe: 10.8, dy: 5.1, roe: 10.3, high: 8.20,  low: 6.50,  volume: "18.1M" },
-  "5347.KL": { price: 11.30, change: 0.08,  pct: 0.71,  pe: 15.6, dy: 3.9, roe: 9.8,  high: 12.50, low: 10.10, volume: "5.2M"  },
+const getTime = () => {
+  const h = new Date().getHours();
+  if (h < 12) return "Good Morning";
+  if (h < 17) return "Good Afternoon";
+  return "Good Evening";
 };
 
-// ============================================================
-// YAHOO FINANCE API — Guna CORS proxy
-// ============================================================
-const PROXY = "https://corsproxy.io/?";
+const fmt = (n) => Number(n).toLocaleString("en-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtPct = (n) => (n >= 0 ? "+" : "") + Number(n).toFixed(2) + "%";
 
-async function fetchYahooQuote(symbol) {
+const SECTORS = ["Banking", "Technology", "Property", "Plantation", "Consumer", "Healthcare", "Telco", "Energy", "Industrial", "REITs", "Others"];
+const TECHNIQUES = ["Marubozu", "VCP Pattern", "Volume Breakout", "EMA200 Trend", "RSI Oversold", "MACD Cross", "Support Bounce", "Resistance Break"];
+const BROKERS = ["Maybank Investment", "OSK Securities", "RHB Investment", "CIMB Securities", "Kenanga", "PublicInvest", "Mplus Online", "Others"];
+
+// ============================================================
+// STORAGE
+// ============================================================
+const loadData = () => {
   try {
-    const url = `${PROXY}${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1d`)}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    const q = data?.chart?.result?.[0];
-    if (!q) throw new Error("No data");
-    const meta = q.meta;
-    const price  = meta.regularMarketPrice;
-    const prev   = meta.chartPreviousClose || meta.previousClose;
-    const change = price - prev;
-    const pct    = (change / prev) * 100;
-    return {
-      price,
-      change,
-      pct,
-      high:   meta.fiftyTwoWeekHigh  || meta.regularMarketDayHigh,
-      low:    meta.fiftyTwoWeekLow   || meta.regularMarketDayLow,
-      volume: formatVolume(meta.regularMarketVolume),
-    };
-  } catch {
-    return null;
-  }
-}
+    const d = localStorage.getItem(STORAGE_KEY);
+    return d ? JSON.parse(d) : null;
+  } catch { return null; }
+};
 
-async function fetchYahooCandles(symbol) {
-  try {
-    const url = `${PROXY}${encodeURIComponent(`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=1mo`)}`;
-    const res = await fetch(url);
-    const data = await res.json();
-    const result = data?.chart?.result?.[0];
-    if (!result) throw new Error();
-    const timestamps = result.timestamp;
-    const closes     = result.indicators.quote[0].close;
-    return timestamps.map((t, i) => ({
-      date:  new Date(t * 1000).toISOString().split("T")[0],
-      close: closes[i] || 0,
-    })).filter(c => c.close > 0);
-  } catch {
-    return null;
-  }
-}
+const saveData = (data) => {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
+};
 
-function formatVolume(n) {
-  if (!n) return "—";
-  if (n >= 1e9) return (n / 1e9).toFixed(1) + "B";
-  if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
-  if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
-  return n.toString();
-}
+const defaultData = () => ({
+  settings: { broker: "", modal: "", defaultRRR: "3", pin: "1234", setupDone: false },
+  portfolio: [], watchlist: [], analysis: [], huntingList: [], journal: [],
+});
 
 // ============================================================
-// HELPER COMPONENTS
+// DESIGN TOKENS
 // ============================================================
-const Pill = ({ children, color = "#0F4C81", bg = "#EFF6FF" }) => (
-  <span style={{ background: bg, color, borderRadius: 20, padding: "2px 10px", fontSize: 11, fontWeight: 600 }}>{children}</span>
+const C = {
+  primary: "#0F4C81", primaryLight: "#EFF6FF", primaryBorder: "#BFDBFE",
+  green: "#059669", greenLight: "#D1FAE5",
+  red: "#DC2626", redLight: "#FEE2E2",
+  amber: "#D97706", amberLight: "#FEF3C7",
+  bg: "#F0F4F8", surface: "#FFFFFF",
+  border: "#E2E8F0", borderLight: "#F1F5F9",
+  text: "#0F172A", textMuted: "#64748B", textFaint: "#94A3B8",
+};
+
+const inp = { width: "100%", padding: "10px 14px", borderRadius: 8, border: `1px solid ${C.border}`, fontSize: 13, fontFamily: "'Sora',sans-serif", color: C.text, background: "#FAFBFC", outline: "none", boxSizing: "border-box" };
+const btn = { padding: "10px 20px", borderRadius: 8, border: "none", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: "'Sora',sans-serif" };
+const cardStyle = { background: C.surface, borderRadius: 14, border: `1px solid ${C.border}`, boxShadow: "0 1px 4px rgba(0,0,0,0.05)", padding: "20px 22px" };
+
+// ============================================================
+// REUSABLE COMPONENTS
+// ============================================================
+const Pill = ({ children, color = C.primary, bg = C.primaryLight }) => (
+  <span style={{ background: bg, color, borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 600 }}>{children}</span>
 );
 
-const StatBox = ({ label, value, sub, subColor }) => (
-  <div style={{ background: "#fff", borderRadius: 12, padding: "16px 18px", border: "1px solid #E2E8F0", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-    <div style={{ fontSize: 10, color: "#94A3B8", fontWeight: 600, letterSpacing: 0.6, marginBottom: 6 }}>{label}</div>
-    <div style={{ fontSize: 19, fontWeight: 700, fontFamily: "'DM Mono',monospace", letterSpacing: "-0.5px" }}>{value}</div>
-    {sub && <div style={{ fontSize: 12, color: subColor || "#64748B", marginTop: 4, fontWeight: 500 }}>{sub}</div>}
+const Lbl = ({ children }) => (
+  <label style={{ fontSize: 11, fontWeight: 600, color: C.textMuted, letterSpacing: 0.4, marginBottom: 5, display: "block" }}>{children}</label>
+);
+
+const Field = ({ label, children }) => (
+  <div style={{ marginBottom: 13 }}>
+    <Lbl>{label}</Lbl>
+    {children}
   </div>
 );
 
-const MiniChart = ({ candles, positive }) => {
-  if (!candles || candles.length < 2) {
-    const pts = positive
-      ? "0,22 20,19 40,15 60,17 80,11 100,8 120,5 140,9 160,4 180,2 200,1"
-      : "0,2  20,5  40,7  60,5  80,10 100,12 120,15 140,13 160,17 180,20 200,22";
-    return (
-      <svg width="100%" height="40" viewBox="0 0 200 24" preserveAspectRatio="none">
-        <polyline points={pts} fill="none" stroke={positive ? "#059669" : "#DC2626"} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    );
-  }
-  const closes = candles.map(c => c.close);
-  const mn = Math.min(...closes), mx = Math.max(...closes);
-  const W = 200, H = 40, pad = 4;
-  const pts = closes.map((v, i) => {
-    const x = (i / (closes.length - 1)) * W;
-    const y = pad + ((mx - v) / (mx - mn || 1)) * (H - pad * 2);
-    return `${x},${y}`;
-  }).join(" ");
-  const fillPts = `0,${H} ${pts} ${W},${H}`;
-  return (
-    <svg width="100%" height="40" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="cg" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={positive ? "#059669" : "#DC2626"} stopOpacity="0.2" />
-          <stop offset="100%" stopColor={positive ? "#059669" : "#DC2626"} stopOpacity="0" />
-        </linearGradient>
-      </defs>
-      <polygon points={fillPts} fill="url(#cg)" />
-      <polyline points={pts} fill="none" stroke={positive ? "#059669" : "#DC2626"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
+const Inp = (props) => <input style={inp} {...props} />;
+
+const Sel = ({ children, ...props }) => (
+  <select style={{ ...inp }} {...props}>{children}</select>
+);
+
+const Btn = ({ variant = "primary", children, style: sx, ...props }) => {
+  const variants = {
+    primary: { background: C.primary, color: "#fff" },
+    ghost: { background: C.primaryLight, color: C.primary, border: `1px solid ${C.primaryBorder}` },
+    danger: { background: C.redLight, color: C.red, border: `1px solid #FECACA` },
+    success: { background: C.green, color: "#fff" },
+  };
+  return <button style={{ ...btn, ...variants[variant], ...sx }} {...props}>{children}</button>;
 };
 
-const LoadingCard = () => (
-  <div style={{ background: "#fff", borderRadius: 12, padding: 20, border: "1px solid #E2E8F0" }}>
-    {[80, 50, 65].map((w, i) => (
-      <div key={i} style={{ height: 14, background: "#F1F5F9", borderRadius: 6, width: `${w}%`, marginBottom: 10, animation: "pulse 1.5s ease-in-out infinite" }} />
+const StatCard = ({ label, value, sub, subColor, accent }) => (
+  <div style={{ ...cardStyle, borderLeft: accent ? `3px solid ${accent}` : undefined, padding: "16px 18px" }}>
+    <div style={{ fontSize: 10, color: C.textFaint, fontWeight: 600, letterSpacing: 0.5, marginBottom: 5 }}>{label}</div>
+    <div style={{ fontSize: 19, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>{value}</div>
+    {sub && <div style={{ fontSize: 12, color: subColor || C.textMuted, marginTop: 3, fontWeight: 500 }}>{sub}</div>}
+  </div>
+);
+
+const Empty = ({ icon, title, sub, action, onAction }) => (
+  <div style={{ textAlign: "center", padding: "50px 20px", background: C.surface, borderRadius: 14, border: `1px solid ${C.border}` }}>
+    <div style={{ fontSize: 40, marginBottom: 12 }}>{icon}</div>
+    <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>{title}</div>
+    <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 20 }}>{sub}</div>
+    {action && <Btn onClick={onAction}>{action}</Btn>}
+  </div>
+);
+
+const Modal = ({ title, onClose, children }) => (
+  <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+    <div style={{ background: C.surface, borderRadius: 16, padding: 24, width: "100%", maxWidth: 480, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+        <h3 style={{ fontSize: 15, fontWeight: 800 }}>{title}</h3>
+        <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: C.textMuted }}>✕</button>
+      </div>
+      {children}
+    </div>
+  </div>
+);
+
+const TechButtons = ({ selected, onChange }) => (
+  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+    {TECHNIQUES.map(t => (
+      <Btn key={t} variant={selected.includes(t) ? "primary" : "ghost"}
+        style={{ padding: "5px 12px", fontSize: 11 }}
+        onClick={() => onChange(selected.includes(t) ? selected.filter(x => x !== t) : [...selected, t])}>
+        {t}
+      </Btn>
     ))}
   </div>
 );
 
 // ============================================================
-// MAIN APP
+// LOGIN
 // ============================================================
-export default function SahamIQ() {
-  const [page, setPage]           = useState("dashboard");
-  const [stocks, setStocks]       = useState({});
-  const [candles, setCandles]     = useState({});
-  const [loading, setLoading]     = useState(true);
-  const [selected, setSelected]   = useState(null);
-  const [watchlist, setWatchlist] = useState(["1155.KL", "1023.KL"]);
-  const [lastUpdate, setLastUpdate] = useState(null);
-  const [usingFallback, setUsingFallback] = useState(false);
+const LoginScreen = ({ onLogin }) => {
+  const [pw, setPw] = useState(""); const [err, setErr] = useState(""); const [show, setShow] = useState(false);
+  return (
+    <div style={{ minHeight: "100vh", background: `linear-gradient(135deg, #F0F4F8, #E2EAF4)`, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ width: "100%", maxWidth: 370, animation: "fadeIn 0.4s ease" }}>
+        <div style={{ textAlign: "center", marginBottom: 28 }}>
+          <div style={{ width: 64, height: 64, background: `linear-gradient(135deg,${C.primary},#2563EB)`, borderRadius: 18, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px", boxShadow: `0 8px 24px rgba(15,76,129,0.3)` }}>
+            <span style={{ color: "#fff", fontSize: 28, fontWeight: 800 }}>L</span>
+          </div>
+          <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.4px" }}>LEGASI<span style={{ color: C.primary }}> STUDIO</span></div>
+          <div style={{ fontSize: 12, color: C.textMuted, marginTop: 4 }}>Personal Trading Research System</div>
+        </div>
+        <div style={{ ...cardStyle, padding: 26 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 18 }}>🔐 Secure Access</div>
+          <Field label="PASSWORD">
+            <div style={{ position: "relative" }}>
+              <Inp type={show ? "text" : "password"} placeholder="Enter app password" value={pw}
+                onChange={e => { setPw(e.target.value); setErr(""); }}
+                onKeyDown={e => e.key === "Enter" && (pw === APP_PASSWORD ? onLogin() : setErr("Incorrect password."))} />
+              <button onClick={() => setShow(!show)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 13 }}>{show ? "🙈" : "👁"}</button>
+            </div>
+          </Field>
+          {err && <div style={{ background: C.redLight, color: C.red, padding: "9px 13px", borderRadius: 7, fontSize: 12, fontWeight: 600, marginBottom: 12 }}>⚠ {err}</div>}
+          <Btn style={{ width: "100%", padding: 13 }} onClick={() => pw === APP_PASSWORD ? onLogin() : setErr("Incorrect password.")}>Enter System →</Btn>
+          <div style={{ textAlign: "center", marginTop: 14, fontSize: 10, color: C.textFaint }}>SYSTEM BUILT BY COMMAND, TRADED BY DISCIPLINE</div>
+        </div>
+      </div>
+    </div>
+  );
+};
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    const results = {};
-    let anyReal = false;
-
-    for (const s of MY_PORTFOLIO) {
-      const q = await fetchYahooQuote(s.code);
-      if (q) {
-        results[s.code] = { ...FALLBACK[s.code], ...q };
-        anyReal = true;
-      } else {
-        results[s.code] = FALLBACK[s.code];
-      }
+// ============================================================
+// PIN SCREEN
+// ============================================================
+const PinScreen = ({ onUnlock, onCancel, savedPin }) => {
+  const [pin, setPin] = useState(""); const [err, setErr] = useState("");
+  const handlePin = (d) => {
+    if (pin.length >= 4) return;
+    const np = pin + d;
+    setPin(np);
+    if (np.length === 4) {
+      if (np === savedPin) setTimeout(onUnlock, 200);
+      else setTimeout(() => { setErr("Incorrect PIN"); setPin(""); }, 300);
     }
+  };
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 500, display: "flex", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ background: C.surface, borderRadius: 20, padding: 28, width: 290, textAlign: "center", boxShadow: "0 20px 60px rgba(0,0,0,0.2)" }}>
+        <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 5 }}>🔐 Portfolio PIN</div>
+        <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 22 }}>Enter your 4-digit PIN</div>
+        <div style={{ display: "flex", justifyContent: "center", gap: 12, marginBottom: 22 }}>
+          {[0,1,2,3].map(i => <div key={i} style={{ width: 14, height: 14, borderRadius: "50%", background: i < pin.length ? C.primary : C.border, transition: "all 0.2s" }} />)}
+        </div>
+        {err && <div style={{ color: C.red, fontSize: 12, marginBottom: 10 }}>{err}</div>}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+          {[1,2,3,4,5,6,7,8,9].map(n => (
+            <button key={n} onClick={() => handlePin(String(n))} style={{ padding: "13px", borderRadius: 9, border: `1px solid ${C.border}`, background: C.bg, fontSize: 17, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Mono',monospace" }}>{n}</button>
+          ))}
+          <Btn variant="danger" style={{ padding: "11px", fontSize: 11 }} onClick={onCancel}>Cancel</Btn>
+          <button onClick={() => handlePin("0")} style={{ padding: "13px", borderRadius: 9, border: `1px solid ${C.border}`, background: C.bg, fontSize: 17, fontWeight: 700, cursor: "pointer", fontFamily: "'DM Mono',monospace" }}>0</button>
+          <button onClick={() => setPin(p => p.slice(0,-1))} style={{ padding: "13px", borderRadius: 9, border: `1px solid ${C.border}`, background: C.bg, fontSize: 15, cursor: "pointer" }}>⌫</button>
+        </div>
+      </div>
+    </div>
+  );
+};
 
-    setStocks(results);
-    setUsingFallback(!anyReal);
-    setLastUpdate(new Date());
-    setLoading(false);
+// ============================================================
+// SETUP WIZARD
+// ============================================================
+const SetupWizard = ({ onComplete }) => {
+  const [f, setF] = useState({ broker: "", modal: "", defaultRRR: "3", pin: "", pinConfirm: "" });
+  const [err, setErr] = useState("");
+  const go = () => {
+    if (!f.broker) return setErr("Please select your broker.");
+    if (!f.modal || isNaN(f.modal)) return setErr("Please enter valid capital.");
+    if (f.pin.length !== 4) return setErr("PIN must be 4 digits.");
+    if (f.pin !== f.pinConfirm) return setErr("PINs do not match.");
+    onComplete({ broker: f.broker, modal: f.modal, defaultRRR: f.defaultRRR, pin: f.pin, setupDone: true });
+  };
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
+      <div style={{ width: "100%", maxWidth: 460 }}>
+        <div style={{ textAlign: "center", marginBottom: 24 }}>
+          <div style={{ fontSize: 20, fontWeight: 800 }}>Welcome, Encik Bos! 👋</div>
+          <div style={{ fontSize: 13, color: C.textMuted, marginTop: 4 }}>Let's set up your LEGASI STUDIO</div>
+        </div>
+        <div style={{ ...cardStyle, padding: 26 }}>
+          <Field label="YOUR BROKER"><Sel value={f.broker} onChange={e => setF({...f, broker: e.target.value})}><option value="">Select broker...</option>{BROKERS.map(b => <option key={b}>{b}</option>)}</Sel></Field>
+          <Field label="TRADING CAPITAL (RM)"><Inp type="number" placeholder="e.g. 10000" value={f.modal} onChange={e => setF({...f, modal: e.target.value})} /></Field>
+          <Field label="DEFAULT RISK-REWARD (1:?)"><Sel value={f.defaultRRR} onChange={e => setF({...f, defaultRRR: e.target.value})}><option value="2">1:2</option><option value="3">1:3</option><option value="4">1:4</option><option value="5">1:5</option></Sel></Field>
+          <Field label="SET PORTFOLIO PIN (4 digits)"><Inp type="password" maxLength={4} placeholder="e.g. 1234" value={f.pin} onChange={e => setF({...f, pin: e.target.value.replace(/\D/g, "")})} /></Field>
+          <Field label="CONFIRM PIN"><Inp type="password" maxLength={4} placeholder="Repeat PIN" value={f.pinConfirm} onChange={e => setF({...f, pinConfirm: e.target.value.replace(/\D/g, "")})} /></Field>
+          {err && <div style={{ background: C.redLight, color: C.red, padding: "9px 13px", borderRadius: 7, fontSize: 12, marginBottom: 12 }}>⚠ {err}</div>}
+          <Btn style={{ width: "100%", padding: 13 }} onClick={go}>Complete Setup →</Btn>
+        </div>
+      </div>
+    </div>
+  );
+};
 
-    for (const s of MY_PORTFOLIO) {
-      const c = await fetchYahooCandles(s.code);
-      if (c) setCandles(prev => ({ ...prev, [s.code]: c }));
-    }
-  }, []);
+// ============================================================
+// PORTFOLIO PAGE
+// ============================================================
+const PortfolioPage = ({ data, onUpdate, pinUnlocked, onRequestPin }) => {
+  const [showForm, setShowForm] = useState(false);
+  const [editIdx, setEditIdx] = useState(null);
+  const blankForm = { code: "", name: "", sector: "", unit: "", buyPrice: "", currentPrice: "", date: "", note: "" };
+  const [form, setForm] = useState(blankForm);
+  const portfolio = data.portfolio || [];
 
-  useEffect(() => { loadData(); }, [loadData]);
+  if (!pinUnlocked) return (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 300 }}>
+      <div style={{ fontSize: 48, marginBottom: 14 }}>🔐</div>
+      <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 6 }}>Portfolio Locked</div>
+      <div style={{ fontSize: 13, color: C.textMuted, marginBottom: 20 }}>Enter PIN to view your portfolio</div>
+      <Btn onClick={onRequestPin}>Unlock Portfolio</Btn>
+    </div>
+  );
 
-  const portfolioStats = MY_PORTFOLIO.map(s => {
-    const live = stocks[s.code];
-    if (!live) return null;
-    const cost    = s.unit * s.beliPrice;
-    const current = s.unit * live.price;
-    const pl      = current - cost;
-    const plPct   = (pl / cost) * 100;
-    const divEst  = s.unit * live.price * (live.dy / 100);
-    return { ...s, ...live, cost, current, pl, plPct, divEst };
-  }).filter(Boolean);
+  const totalCost = portfolio.reduce((a, s) => a + (s.unit * s.buyPrice), 0);
+  const totalCurr = portfolio.reduce((a, s) => a + (s.unit * (s.currentPrice || s.buyPrice)), 0);
+  const totalPL = totalCurr - totalCost;
+  const totalPLPct = totalCost > 0 ? (totalPL / totalCost) * 100 : 0;
 
-  const totalCost    = portfolioStats.reduce((a, s) => a + s.cost, 0);
-  const totalCurrent = portfolioStats.reduce((a, s) => a + s.current, 0);
-  const totalPL      = totalCurrent - totalCost;
-  const totalPLPct   = (totalPL / totalCost) * 100;
-  const totalDiv     = portfolioStats.reduce((a, s) => a + s.divEst, 0);
-
-  const fmt = (n) => n.toLocaleString("ms-MY", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-  const goDetail = (code) => {
-    const s = MY_PORTFOLIO.find(p => p.code === code);
-    setSelected({ ...s, ...stocks[code] });
-    setPage("detail");
+  const save = () => {
+    if (!form.code || !form.unit || !form.buyPrice) return;
+    const item = { ...form, unit: +form.unit, buyPrice: +form.buyPrice, currentPrice: +(form.currentPrice || form.buyPrice), id: Date.now() };
+    const updated = [...portfolio];
+    editIdx !== null ? updated[editIdx] = { ...updated[editIdx], ...item } : updated.push(item);
+    onUpdate({ ...data, portfolio: updated });
+    setShowForm(false); setEditIdx(null); setForm(blankForm);
   };
 
-  const getDisplay = (code) => MY_PORTFOLIO.find(p => p.code === code)?.display || code;
+  const del = (i) => { if (!window.confirm("Delete this holding?")) return; onUpdate({ ...data, portfolio: portfolio.filter((_, x) => x !== i) }); };
+  const edit = (i) => { setForm({ ...portfolio[i] }); setEditIdx(i); setShowForm(true); };
+  const updatePrice = (i, p) => { const u = [...portfolio]; u[i] = { ...u[i], currentPrice: +p }; onUpdate({ ...data, portfolio: u }); };
 
   return (
-    <div style={{ fontFamily: "'Sora', sans-serif", background: "#F0F4F8", minHeight: "100vh", color: "#0F172A" }}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500;600&display=swap');
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-        @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
-        .card { animation: fadeIn 0.3s ease forwards; }
-        .row-hover:hover { background: #F8FAFC !important; }
-        button { font-family: 'Sora', sans-serif; }
-      `}</style>
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+        <h1 style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.4px" }}>◎ My Portfolio</h1>
+        <Btn onClick={() => { setForm(blankForm); setEditIdx(null); setShowForm(true); }}>+ Add</Btn>
+      </div>
 
-      {/* HEADER */}
-      <header style={{ background: "#fff", borderBottom: "1px solid #E2E8F0", padding: "0 20px", height: 58, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <div style={{ width: 34, height: 34, background: "linear-gradient(135deg,#0F4C81,#2563EB)", borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <span style={{ color: "#fff", fontSize: 15, fontWeight: 800 }}>S</span>
-          </div>
-          <span style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-0.4px" }}>Saham<span style={{ color: "#0F4C81" }}>IQ</span></span>
+      {portfolio.length > 0 && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(145px,1fr))", gap: 10, marginBottom: 18 }}>
+          <StatCard label="CURRENT VALUE" value={`RM ${fmt(totalCurr)}`} sub={`Cost: RM ${fmt(totalCost)}`} accent={C.primary} />
+          <StatCard label="UNREALIZED P&L" value={`${totalPL >= 0 ? "+" : ""}RM ${fmt(totalPL)}`} sub={fmtPct(totalPLPct)} subColor={totalPL >= 0 ? C.green : C.red} accent={totalPL >= 0 ? C.green : C.red} />
+          <StatCard label="POSITIONS" value={portfolio.length.toString()} sub="Active holdings" accent={C.amber} />
+          <StatCard label="CAPITAL" value={`RM ${fmt(data.settings?.modal || 0)}`} sub={data.settings?.broker || "—"} accent={C.primary} />
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-          {usingFallback && <Pill color="#D97706" bg="#FEF3C7">⚠ Demo Data</Pill>}
-          {!usingFallback && !loading && <Pill color="#059669" bg="#D1FAE5">● Live</Pill>}
-          <button onClick={loadData} style={{ width: 34, height: 34, borderRadius: 8, border: "1px solid #E2E8F0", background: "#F8FAFC", cursor: "pointer", fontSize: 14 }}>↻</button>
-          {lastUpdate && <span style={{ fontSize: 11, color: "#94A3B8" }}>{lastUpdate.toLocaleTimeString("ms-MY", { hour: "2-digit", minute: "2-digit" })}</span>}
-        </div>
-      </header>
+      )}
 
-      {/* NAV */}
-      <nav style={{ background: "#fff", borderBottom: "1px solid #E2E8F0", padding: "0 20px", display: "flex", overflowX: "auto" }}>
-        {[
-          { id: "dashboard", label: "Dashboard", icon: "⊞" },
-          { id: "portfolio", label: "Portfolio",  icon: "◎" },
-          { id: "watchlist", label: "Watchlist",  icon: "★" },
-          { id: "screener",  label: "Maklumat",   icon: "⊙" },
-        ].map(n => (
-          <button key={n.id} onClick={() => { setPage(n.id); setSelected(null); }}
-            style={{ padding: "12px 16px", border: "none", background: "none", cursor: "pointer", fontSize: 13, fontWeight: page === n.id ? 700 : 400, color: page === n.id ? "#0F4C81" : "#64748B", borderBottom: page === n.id ? "2.5px solid #0F4C81" : "2.5px solid transparent", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 6, transition: "all 0.15s" }}>
-            {n.icon} {n.label}
-            {n.id === "watchlist" && <span style={{ background: "#EFF6FF", color: "#0F4C81", borderRadius: 10, padding: "1px 7px", fontSize: 10, fontWeight: 700 }}>{watchlist.length}</span>}
-          </button>
-        ))}
-      </nav>
-
-      <main style={{ maxWidth: 960, margin: "0 auto", padding: "20px 14px" }}>
-
-        {/* DASHBOARD */}
-        {page === "dashboard" && (
-          <div className="card">
-            <div style={{ marginBottom: 20 }}>
-              <h1 style={{ fontSize: 21, fontWeight: 800, letterSpacing: "-0.5px" }}>Selamat Datang 👋</h1>
-              <p style={{ fontSize: 13, color: "#64748B", marginTop: 3 }}>
-                {new Date().toLocaleDateString("ms-MY", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
-              </p>
-            </div>
-
-            {!loading && (
-              <div style={{ background: "linear-gradient(135deg,#0F4C81 0%,#1D6FB8 100%)", borderRadius: 16, padding: "22px 24px", color: "#fff", marginBottom: 20, boxShadow: "0 4px 20px rgba(15,76,129,0.25)" }}>
-                <div style={{ fontSize: 11, opacity: 0.75, letterSpacing: 0.6, marginBottom: 6 }}>JUMLAH NILAI PORTFOLIO</div>
-                <div style={{ fontSize: 32, fontWeight: 800, fontFamily: "'DM Mono',monospace", letterSpacing: "-1px" }}>RM {fmt(totalCurrent)}</div>
-                <div style={{ fontSize: 13, marginTop: 4, opacity: 0.9, fontWeight: 500 }}>
-                  {totalPL >= 0 ? "▲" : "▼"} RM {fmt(Math.abs(totalPL))} ({totalPLPct >= 0 ? "+" : ""}{totalPLPct.toFixed(2)}%) keseluruhan
+      {portfolio.length === 0 ? <Empty icon="📊" title="No Holdings" sub="Add your first position to start tracking." action="+ Add Holding" onAction={() => setShowForm(true)} /> : (
+        <div style={{ display: "grid", gap: 10 }}>
+          {portfolio.map((s, i) => {
+            const cost = s.unit * s.buyPrice, curr = s.unit * (s.currentPrice || s.buyPrice), pl = curr - cost, plPct = (pl / cost) * 100;
+            return (
+              <div key={s.id || i} style={{ ...cardStyle, padding: "18px 20px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                    <div style={{ width: 40, height: 40, borderRadius: 10, background: C.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: C.primary }}>{s.code?.slice(0,2)}</div>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 800 }}>{s.code} <span style={{ fontSize: 11, color: C.textFaint }}>· {s.sector}</span></div>
+                      <div style={{ fontSize: 11, color: C.textMuted }}>{s.name}</div>
+                      <div style={{ fontSize: 10, color: C.textFaint }}>📅 {s.date} · {Number(s.unit).toLocaleString()} units @ RM {fmt(s.buyPrice)}</div>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>RM {fmt(curr)}</div>
+                    <div style={{ fontSize: 12, color: pl >= 0 ? C.green : C.red, fontWeight: 700 }}>{pl >= 0 ? "▲ +" : "▼ "}RM {fmt(Math.abs(pl))} ({fmtPct(plPct)})</div>
+                  </div>
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginTop: 18, paddingTop: 18, borderTop: "1px solid rgba(255,255,255,0.2)" }}>
-                  {[
-                    { label: "Modal Asal",        val: `RM ${fmt(totalCost)}` },
-                    { label: "Untung/Rugi",        val: `${totalPL >= 0 ? "+" : ""}RM ${fmt(totalPL)}` },
-                    { label: "Est. Dividen/Tahun", val: `RM ${fmt(totalDiv)}` },
-                  ].map((item, i) => (
-                    <div key={i}>
-                      <div style={{ fontSize: 10, opacity: 0.65, marginBottom: 4 }}>{item.label}</div>
-                      <div style={{ fontSize: 13, fontWeight: 700, fontFamily: "'DM Mono',monospace" }}>{item.val}</div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 10, paddingTop: 10, borderTop: `1px solid ${C.borderLight}` }}>
+                  <span style={{ fontSize: 11, color: C.textMuted, whiteSpace: "nowrap" }}>Update price:</span>
+                  <input type="number" defaultValue={s.currentPrice || s.buyPrice} step="0.01" onBlur={e => updatePrice(i, e.target.value)} style={{ ...inp, padding: "6px 10px", width: 90, fontSize: 12 }} />
+                  <span style={{ fontSize: 11, color: C.textFaint }}>RM</span>
+                </div>
+                {s.note && <div style={{ fontSize: 11, color: C.textMuted, fontStyle: "italic", marginBottom: 8 }}>📝 {s.note}</div>}
+                <div style={{ display: "flex", gap: 8 }}>
+                  <Btn variant="ghost" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => edit(i)}>Edit</Btn>
+                  <Btn variant="danger" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => del(i)}>Delete</Btn>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {showForm && (
+        <Modal title={editIdx !== null ? "Edit Holding" : "Add Holding"} onClose={() => { setShowForm(false); setForm(blankForm); }}>
+          <Field label="STOCK CODE"><Inp placeholder="e.g. MAYBANK" value={form.code} onChange={e => setForm({...form, code: e.target.value.toUpperCase()})} /></Field>
+          <Field label="COMPANY NAME"><Inp placeholder="e.g. Malayan Banking Bhd" value={form.name} onChange={e => setForm({...form, name: e.target.value})} /></Field>
+          <Field label="SECTOR"><Sel value={form.sector} onChange={e => setForm({...form, sector: e.target.value})}><option value="">Select...</option>{SECTORS.map(s => <option key={s}>{s}</option>)}</Sel></Field>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <Field label="UNITS"><Inp type="number" value={form.unit} onChange={e => setForm({...form, unit: e.target.value})} /></Field>
+            <Field label="BUY PRICE (RM)"><Inp type="number" step="0.01" value={form.buyPrice} onChange={e => setForm({...form, buyPrice: e.target.value})} /></Field>
+            <Field label="CURRENT PRICE (RM)"><Inp type="number" step="0.01" value={form.currentPrice} onChange={e => setForm({...form, currentPrice: e.target.value})} /></Field>
+            <Field label="DATE BOUGHT"><Inp type="date" value={form.date} onChange={e => setForm({...form, date: e.target.value})} /></Field>
+          </div>
+          <Field label="NOTES"><Inp placeholder="Notes..." value={form.note} onChange={e => setForm({...form, note: e.target.value})} /></Field>
+          <div style={{ display: "flex", gap: 10 }}>
+            <Btn style={{ flex: 1 }} onClick={save}>Save</Btn>
+            <Btn variant="ghost" style={{ flex: 1 }} onClick={() => { setShowForm(false); setForm(blankForm); }}>Cancel</Btn>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
+// ============================================================
+// WATCHLIST PAGE
+// ============================================================
+const WatchlistPage = ({ data, onUpdate }) => {
+  const [showForm, setShowForm] = useState(false);
+  const [trackIdx, setTrackIdx] = useState(null);
+  const [trackP, setTrackP] = useState(""); const [trackN, setTrackN] = useState("");
+  const blank = { code: "", name: "", sector: "", targetBuy: "", targetSL: "", lastPrice: "", note: "", date: new Date().toISOString().split("T")[0] };
+  const [form, setForm] = useState(blank);
+  const watchlist = data.watchlist || [];
+
+  const save = () => {
+    if (!form.code) return;
+    onUpdate({ ...data, watchlist: [...watchlist, { ...form, id: Date.now(), tracking: [] }] });
+    setShowForm(false); setForm(blank);
+  };
+  const del = (i) => { if (!window.confirm("Remove?")) return; onUpdate({ ...data, watchlist: watchlist.filter((_, x) => x !== i) }); };
+  const addTrack = (i) => {
+    if (!trackP) return;
+    const u = [...watchlist];
+    u[i] = { ...u[i], tracking: [...(u[i].tracking || []), { date: new Date().toISOString().split("T")[0], price: +trackP, note: trackN }], lastPrice: +trackP };
+    onUpdate({ ...data, watchlist: u });
+    setTrackIdx(null); setTrackP(""); setTrackN("");
+  };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+        <h1 style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.4px" }}>★ Watchlist</h1>
+        <Btn onClick={() => setShowForm(true)}>+ Add Stock</Btn>
+      </div>
+
+      {watchlist.length === 0 ? <Empty icon="👁" title="Watchlist Empty" sub="Add stocks to monitor daily." action="+ Add Stock" onAction={() => setShowForm(true)} /> : (
+        <div style={{ display: "grid", gap: 10 }}>
+          {watchlist.map((w, i) => (
+            <div key={w.id || i} style={{ ...cardStyle }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                  <div style={{ width: 40, height: 40, borderRadius: 10, background: C.amberLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: C.amber }}>{w.code?.slice(0,2)}</div>
+                  <div>
+                    <div style={{ fontSize: 14, fontWeight: 800 }}>{w.code} <span style={{ fontSize: 11, color: C.textFaint }}>· {w.sector}</span></div>
+                    <div style={{ fontSize: 11, color: C.textMuted }}>{w.name}</div>
+                  </div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  {w.lastPrice && <div style={{ fontSize: 15, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>RM {fmt(w.lastPrice)}</div>}
+                  <div style={{ fontSize: 10, color: C.textFaint }}>Added: {w.date}</div>
+                </div>
+              </div>
+              <div style={{ display: "flex", gap: 10, marginBottom: 10, flexWrap: "wrap" }}>
+                {w.targetBuy && <div style={{ background: C.greenLight, padding: "4px 10px", borderRadius: 6 }}><div style={{ fontSize: 9, color: C.green }}>TARGET BUY</div><div style={{ fontSize: 12, fontWeight: 700, color: C.green, fontFamily: "'DM Mono',monospace" }}>RM {fmt(w.targetBuy)}</div></div>}
+                {w.targetSL && <div style={{ background: C.redLight, padding: "4px 10px", borderRadius: 6 }}><div style={{ fontSize: 9, color: C.red }}>STOP LOSS</div><div style={{ fontSize: 12, fontWeight: 700, color: C.red, fontFamily: "'DM Mono',monospace" }}>RM {fmt(w.targetSL)}</div></div>}
+              </div>
+              {w.tracking?.length > 0 && (
+                <div style={{ background: C.bg, borderRadius: 8, padding: "8px 12px", marginBottom: 10 }}>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: C.textMuted, marginBottom: 5 }}>PRICE HISTORY</div>
+                  {w.tracking.slice(-3).map((t, ti) => (
+                    <div key={ti} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 2 }}>
+                      <span style={{ color: C.textMuted }}>{t.date}</span>
+                      <span style={{ fontWeight: 700, fontFamily: "'DM Mono',monospace" }}>RM {fmt(t.price)}</span>
+                      {t.note && <span style={{ color: C.textFaint, fontStyle: "italic" }}>{t.note}</span>}
                     </div>
                   ))}
                 </div>
+              )}
+              {trackIdx === i ? (
+                <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center" }}>
+                  <input type="number" step="0.01" placeholder="Price" value={trackP} onChange={e => setTrackP(e.target.value)} style={{ ...inp, width: 90, padding: "7px 10px" }} />
+                  <input placeholder="Note" value={trackN} onChange={e => setTrackN(e.target.value)} style={{ ...inp, padding: "7px 10px" }} />
+                  <Btn style={{ padding: "7px 14px", whiteSpace: "nowrap" }} onClick={() => addTrack(i)}>Save</Btn>
+                  <Btn variant="ghost" style={{ padding: "7px 12px" }} onClick={() => setTrackIdx(null)}>✕</Btn>
+                </div>
+              ) : null}
+              {w.note && <div style={{ fontSize: 11, color: C.textMuted, fontStyle: "italic", marginBottom: 8 }}>📝 {w.note}</div>}
+              <div style={{ display: "flex", gap: 8 }}>
+                <Btn variant="ghost" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => setTrackIdx(trackIdx === i ? null : i)}>+ Track Today</Btn>
+                <Btn variant="danger" style={{ padding: "6px 14px", fontSize: 12 }} onClick={() => del(i)}>Remove</Btn>
               </div>
-            )}
-
-            <h2 style={{ fontSize: 14, fontWeight: 700, marginBottom: 12, color: "#64748B", letterSpacing: 0.3 }}>SAHAM KAMU</h2>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
-              {loading ? MY_PORTFOLIO.map((_, i) => <LoadingCard key={i} />) :
-                MY_PORTFOLIO.map(s => {
-                  const live = stocks[s.code];
-                  if (!live) return null;
-                  return (
-                    <div key={s.code} className="card" onClick={() => goDetail(s.code)}
-                      style={{ background: "#fff", borderRadius: 14, padding: "16px 18px", border: "1px solid #E2E8F0", cursor: "pointer", transition: "all 0.2s", boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}
-                      onMouseEnter={e => { e.currentTarget.style.boxShadow = "0 4px 16px rgba(15,76,129,0.12)"; e.currentTarget.style.borderColor = "#BFDBFE"; }}
-                      onMouseLeave={e => { e.currentTarget.style.boxShadow = "0 1px 4px rgba(0,0,0,0.04)"; e.currentTarget.style.borderColor = "#E2E8F0"; }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 8 }}>
-                        <div>
-                          <div style={{ fontSize: 14, fontWeight: 800 }}>{s.display}</div>
-                          <div style={{ fontSize: 10, color: "#94A3B8", marginTop: 1 }}>{s.sector}</div>
-                        </div>
-                        <Pill color={live.pct >= 0 ? "#059669" : "#DC2626"} bg={live.pct >= 0 ? "#D1FAE5" : "#FEE2E2"}>
-                          {live.pct >= 0 ? "▲" : "▼"} {Math.abs(live.pct).toFixed(2)}%
-                        </Pill>
-                      </div>
-                      <div style={{ height: 40, marginBottom: 8 }}>
-                        <MiniChart candles={candles[s.code]} positive={live.pct >= 0} />
-                      </div>
-                      <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'DM Mono',monospace", letterSpacing: "-0.5px" }}>RM {live.price.toFixed(2)}</div>
-                      <div style={{ fontSize: 11, color: "#64748B", marginTop: 4 }}>PE {live.pe} · DY {live.dy}% · ROE {live.roe}%</div>
-                    </div>
-                  );
-                })
-              }
             </div>
+          ))}
+        </div>
+      )}
+
+      {showForm && (
+        <Modal title="Add to Watchlist" onClose={() => { setShowForm(false); setForm(blank); }}>
+          <Field label="STOCK CODE"><Inp placeholder="e.g. INARI" value={form.code} onChange={e => setForm({...form, code: e.target.value.toUpperCase()})} /></Field>
+          <Field label="COMPANY NAME"><Inp placeholder="e.g. Inari Amertron Bhd" value={form.name} onChange={e => setForm({...form, name: e.target.value})} /></Field>
+          <Field label="SECTOR"><Sel value={form.sector} onChange={e => setForm({...form, sector: e.target.value})}><option value="">Select...</option>{SECTORS.map(s => <option key={s}>{s}</option>)}</Sel></Field>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <Field label="TARGET BUY (RM)"><Inp type="number" step="0.01" value={form.targetBuy} onChange={e => setForm({...form, targetBuy: e.target.value})} /></Field>
+            <Field label="STOP LOSS (RM)"><Inp type="number" step="0.01" value={form.targetSL} onChange={e => setForm({...form, targetSL: e.target.value})} /></Field>
           </div>
-        )}
-
-        {/* PORTFOLIO */}
-        {page === "portfolio" && (
-          <div className="card">
-            <h1 style={{ fontSize: 20, fontWeight: 800, marginBottom: 20, letterSpacing: "-0.5px" }}>◎ Portfolio Kamu</h1>
-            {!loading && (
-              <>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(160px,1fr))", gap: 12, marginBottom: 20 }}>
-                  <StatBox label="NILAI SEMASA"   value={`RM ${fmt(totalCurrent)}`} sub={`Modal: RM ${fmt(totalCost)}`} />
-                  <StatBox label="UNTUNG / RUGI"  value={`${totalPL >= 0 ? "+" : ""}RM ${fmt(totalPL)}`} sub={`${totalPLPct >= 0 ? "+" : ""}${totalPLPct.toFixed(2)}%`} subColor={totalPL >= 0 ? "#059669" : "#DC2626"} />
-                  <StatBox label="EST. DIVIDEN"   value={`RM ${fmt(totalDiv)}`} sub="Setahun (anggaran)" />
-                  <StatBox label="BILANGAN SAHAM" value={MY_PORTFOLIO.length.toString()} sub="Dalam portfolio" />
-                </div>
-
-                <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E2E8F0", overflow: "hidden", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-                  <div style={{ padding: "14px 20px", borderBottom: "1px solid #E2E8F0", fontSize: 13, fontWeight: 700 }}>Pegangan Saham</div>
-                  {portfolioStats.map((s, i) => (
-                    <div key={s.code} className="row-hover" style={{ padding: "16px 20px", borderBottom: i < portfolioStats.length - 1 ? "1px solid #F1F5F9" : "none", cursor: "pointer" }} onClick={() => goDetail(s.code)}>
-                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                          <div style={{ width: 38, height: 38, borderRadius: 10, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: "#0F4C81" }}>{s.display.slice(0, 2)}</div>
-                          <div>
-                            <div style={{ fontSize: 14, fontWeight: 700 }}>{s.display}</div>
-                            <div style={{ fontSize: 11, color: "#94A3B8" }}>{s.unit.toLocaleString()} unit · Beli @ RM {s.beliPrice.toFixed(2)}</div>
-                          </div>
-                        </div>
-                        <div style={{ textAlign: "right" }}>
-                          <div style={{ fontSize: 15, fontWeight: 700, fontFamily: "'DM Mono',monospace" }}>RM {fmt(s.current)}</div>
-                          <div style={{ fontSize: 12, color: s.pl >= 0 ? "#059669" : "#DC2626", fontWeight: 600 }}>
-                            {s.pl >= 0 ? "▲ +" : "▼ "}RM {fmt(Math.abs(s.pl))} ({s.plPct >= 0 ? "+" : ""}{s.plPct.toFixed(2)}%)
-                          </div>
-                        </div>
-                      </div>
-                      <div style={{ background: "#F1F5F9", borderRadius: 4, height: 5, overflow: "hidden" }}>
-                        <div style={{ width: `${Math.min(Math.abs(s.plPct) * 4, 100)}%`, height: "100%", background: s.pl >= 0 ? "#059669" : "#DC2626", borderRadius: 4 }} />
-                      </div>
-                      <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6 }}>
-                        <span style={{ fontSize: 11, color: "#94A3B8" }}>Harga semasa: RM {s.price.toFixed(2)}</span>
-                        <span style={{ fontSize: 11, color: "#94A3B8" }}>Est. Dividen: RM {fmt(s.divEst)}/tahun</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div style={{ background: "#fff", borderRadius: 14, border: "1px solid #E2E8F0", padding: "18px 20px", marginTop: 14, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 14 }}>Agihan Portfolio</div>
-                  {portfolioStats.map(s => {
-                    const pct = (s.current / totalCurrent) * 100;
-                    const colors = { "1155.KL": "#0F4C81", "1295.KL": "#059669", "1023.KL": "#D97706", "5347.KL": "#7C3AED" };
-                    return (
-                      <div key={s.code} style={{ marginBottom: 10 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
-                          <span style={{ fontSize: 12, fontWeight: 600 }}>{s.display}</span>
-                          <span style={{ fontSize: 12, fontFamily: "'DM Mono',monospace", color: "#64748B" }}>{pct.toFixed(1)}%</span>
-                        </div>
-                        <div style={{ background: "#F1F5F9", borderRadius: 4, height: 8, overflow: "hidden" }}>
-                          <div style={{ width: `${pct}%`, height: "100%", background: colors[s.code] || "#0F4C81", borderRadius: 4, transition: "width 1s ease" }} />
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-            {loading && <div style={{ textAlign: "center", padding: 40, color: "#94A3B8" }}>Memuatkan data portfolio...</div>}
+          <Field label="LAST PRICE (RM)"><Inp type="number" step="0.01" value={form.lastPrice} onChange={e => setForm({...form, lastPrice: e.target.value})} /></Field>
+          <Field label="NOTES"><Inp placeholder="Why watching..." value={form.note} onChange={e => setForm({...form, note: e.target.value})} /></Field>
+          <div style={{ display: "flex", gap: 10 }}>
+            <Btn style={{ flex: 1 }} onClick={save}>Add</Btn>
+            <Btn variant="ghost" style={{ flex: 1 }} onClick={() => { setShowForm(false); setForm(blank); }}>Cancel</Btn>
           </div>
-        )}
+        </Modal>
+      )}
+    </div>
+  );
+};
 
-        {/* WATCHLIST */}
-        {page === "watchlist" && (
-          <div className="card">
-            <h1 style={{ fontSize: 20, fontWeight: 800, marginBottom: 20, letterSpacing: "-0.5px" }}>★ Watchlist Kamu</h1>
-            {watchlist.length === 0 ? (
-              <div style={{ textAlign: "center", padding: "50px 20px", background: "#fff", borderRadius: 14, border: "1px solid #E2E8F0" }}>
-                <div style={{ fontSize: 36, marginBottom: 12 }}>☆</div>
-                <h3 style={{ fontSize: 15, fontWeight: 700, marginBottom: 8 }}>Watchlist masih kosong</h3>
-                <p style={{ fontSize: 13, color: "#64748B", marginBottom: 18 }}>Pergi ke Maklumat dan tambah saham yang kamu minati.</p>
-                <button onClick={() => setPage("screener")} style={{ padding: "10px 22px", background: "#0F4C81", color: "#fff", border: "none", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer" }}>Buka Maklumat →</button>
+// ============================================================
+// TECHNICAL ANALYSIS PAGE
+// ============================================================
+const TechnicalPage = ({ data, onUpdate }) => {
+  const [showForm, setShowForm] = useState(false);
+  const [selIdx, setSelIdx] = useState(null);
+  const blank = { code: "", name: "", sector: "", date: new Date().toISOString().split("T")[0], open: "", high: "", low: "", close: "", volume: "", ema200: "", sma20vol: "", techniques: [], note: "", modal: data.settings?.modal || "", rrr: data.settings?.defaultRRR || "3" };
+  const [form, setForm] = useState(blank);
+  const analysis = data.analysis || [];
+
+  const runAnalysis = (f) => {
+    const o = +f.open, h = +f.high, l = +f.low, c = +f.close;
+    const vol = +f.currentVol || +f.volume, smaVol = +f.sma20vol, ema200 = +f.ema200;
+    const modal = +f.modal, rrr = +f.rrr;
+    const checks = {};
+    if (o && h && l && c) {
+      const body = Math.abs(c - o), range = h - l;
+      checks.marubozu = { label: "Marubozu (Body > 90%)", pass: range > 0 && (body/range)*100 >= 90, value: range > 0 ? ((body/range)*100).toFixed(1) + "%" : "—" };
+    }
+    if (ema200 && c) checks.ema200 = { label: "Close > EMA 200", pass: c > ema200, value: `${c} vs ${ema200}` };
+    if (vol && smaVol) checks.volume = { label: "Volume > 2x SMA20 Vol", pass: vol > smaVol * 2, value: `${(vol/smaVol).toFixed(1)}x` };
+    const sl = l || 0, risk = c - sl, tp = c + (risk * rrr);
+    const riskPct = c > 0 ? ((c - sl) / c) * 100 : 0;
+    const tpPct = c > 0 ? ((tp - c) / c) * 100 : 0;
+    const lotSize = risk > 0 ? Math.floor((modal * 0.20) / risk / 100) * 100 : 0;
+    const passes = Object.values(checks).filter(v => v?.pass).length;
+    const total = Object.values(checks).filter(v => v).length;
+    const signal = total === 0 ? "N/A" : passes === total ? "BUY" : passes >= total * 0.6 ? "WATCH" : "WAIT";
+    return { checks, sl, tp, risk, riskPct, tpPct, lotSize, signal, rrr };
+  };
+
+  const save = () => {
+    if (!form.code) return;
+    const result = runAnalysis(form);
+    onUpdate({ ...data, analysis: [{ ...form, id: Date.now(), result }, ...analysis] });
+    setShowForm(false); setForm(blank);
+  };
+
+  const addToHunting = (a) => {
+    const r = a.result;
+    const item = { id: Date.now(), code: a.code, name: a.name, sector: a.sector, entry: a.close, sl: r.sl, tp: r.tp, lot: r.lotSize, rrr: a.rrr, signal: r.signal, date: a.date, status: "Pending", note: a.note, techniques: a.techniques };
+    onUpdate({ ...data, huntingList: [item, ...(data.huntingList || [])] });
+    alert(`${a.code} added to Hunting List! ✅`);
+  };
+
+  const del = (i) => { if (!window.confirm("Delete?")) return; onUpdate({ ...data, analysis: analysis.filter((_, x) => x !== i) }); };
+  const sel = selIdx !== null ? analysis[selIdx] : null;
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+        <h1 style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.4px" }}>❤️ Technical Analysis</h1>
+        <Btn onClick={() => { setForm(blank); setSelIdx(null); setShowForm(true); }}>+ New Analysis</Btn>
+      </div>
+
+      {/* Detail View */}
+      {sel && (
+        <div style={{ ...cardStyle, marginBottom: 18 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+            <div>
+              <div style={{ fontSize: 20, fontWeight: 800 }}>{sel.code}</div>
+              <div style={{ fontSize: 12, color: C.textMuted }}>{sel.name} · {sel.date}</div>
+            </div>
+            <Pill color={sel.result?.signal === "BUY" ? C.green : sel.result?.signal === "WATCH" ? C.amber : C.textMuted}
+              bg={sel.result?.signal === "BUY" ? C.greenLight : sel.result?.signal === "WATCH" ? C.amberLight : C.bg}>
+              {sel.result?.signal === "BUY" ? "🟢 BUY" : sel.result?.signal === "WATCH" ? "🟡 WATCH" : "⚪ WAIT"}
+            </Pill>
+          </div>
+
+          {/* OHLCV */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 6, marginBottom: 14 }}>
+            {[["OPEN", sel.open], ["HIGH", sel.high], ["LOW", sel.low], ["CLOSE", sel.close], ["VOLUME", sel.volume]].map(([l, v]) => (
+              <div key={l} style={{ background: C.bg, borderRadius: 7, padding: "7px 8px", textAlign: "center" }}>
+                <div style={{ fontSize: 9, color: C.textFaint, fontWeight: 600 }}>{l}</div>
+                <div style={{ fontSize: 12, fontWeight: 700, fontFamily: "'DM Mono',monospace" }}>{v || "—"}</div>
               </div>
-            ) : (
-              <div style={{ display: "grid", gap: 10 }}>
-                {MY_PORTFOLIO.filter(s => watchlist.includes(s.code)).map(s => {
-                  const live = stocks[s.code];
-                  if (!live) return null;
-                  return (
-                    <div key={s.code} style={{ background: "#fff", borderRadius: 14, padding: "16px 18px", border: "1px solid #E2E8F0", display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }} onClick={() => goDetail(s.code)}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                        <div style={{ width: 40, height: 40, borderRadius: 10, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#0F4C81" }}>{s.display.slice(0, 2)}</div>
-                        <div>
-                          <div style={{ fontSize: 14, fontWeight: 700 }}>{s.display}</div>
-                          <div style={{ fontSize: 11, color: "#94A3B8" }}>{s.name}</div>
-                          <div style={{ fontSize: 11, color: "#64748B", marginTop: 2 }}>PE {live.pe} · DY {live.dy}% · ROE {live.roe}%</div>
-                        </div>
+            ))}
+          </div>
+
+          {/* Checks */}
+          {sel.result?.checks && (
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, marginBottom: 8 }}>ANALYSIS CRITERIA</div>
+              {Object.values(sel.result.checks).map((c, ci) => c && (
+                <div key={ci} style={{ display: "flex", justifyContent: "space-between", padding: "8px 12px", background: c.pass ? C.greenLight : C.redLight, borderRadius: 7, marginBottom: 5 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600 }}>{c.label}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: c.pass ? C.green : C.red }}>{c.pass ? "✓" : "✗"} {c.value}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Risk Card */}
+          {sel.result && (
+            <div style={{ background: `linear-gradient(135deg,${C.primary},#1D6FB8)`, borderRadius: 12, padding: "16px 18px", color: "#fff", marginBottom: 14 }}>
+              <div style={{ fontSize: 10, opacity: 0.75, marginBottom: 10 }}>⚡ RISK MANAGEMENT (RRR 1:{sel.result.rrr})</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+                {[["ENTRY", `RM ${fmt(sel.close)}`], ["STOP LOSS", `RM ${fmt(sel.result.sl)}`], ["TARGET", `RM ${fmt(sel.result.tp)}`]].map(([l, v]) => (
+                  <div key={l} style={{ textAlign: "center" }}>
+                    <div style={{ fontSize: 9, opacity: 0.7, marginBottom: 3 }}>{l}</div>
+                    <div style={{ fontSize: 14, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>{v}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, paddingTop: 10, borderTop: "1px solid rgba(255,255,255,0.2)" }}>
+                <div><div style={{ fontSize: 9, opacity: 0.7 }}>RISK / REWARD</div><div style={{ fontSize: 12, fontWeight: 700 }}>-{sel.result.riskPct.toFixed(2)}% / +{sel.result.tpPct.toFixed(2)}%</div></div>
+                <div><div style={{ fontSize: 9, opacity: 0.7 }}>LOT SIZE (20% capital)</div><div style={{ fontSize: 12, fontWeight: 700 }}>{Number(sel.result.lotSize).toLocaleString()} units</div></div>
+              </div>
+            </div>
+          )}
+
+          {sel.techniques?.length > 0 && <div style={{ marginBottom: 10 }}>{sel.techniques.map(t => <Pill key={t} style={{ marginRight: 5 }}>{t}</Pill>)}</div>}
+          {sel.note && <div style={{ fontSize: 12, color: C.textMuted, fontStyle: "italic", marginBottom: 12 }}>📝 {sel.note}</div>}
+
+          <div style={{ display: "flex", gap: 8 }}>
+            {sel.result?.signal !== "WAIT" && sel.result?.signal !== "N/A" && (
+              <Btn variant="success" style={{ flex: 1 }} onClick={() => addToHunting(sel)}>🎯 Add to Hunting List</Btn>
+            )}
+            <Btn variant="ghost" onClick={() => setSelIdx(null)}>← Back</Btn>
+          </div>
+        </div>
+      )}
+
+      {/* List */}
+      {!sel && (
+        analysis.length === 0 ? <Empty icon="📈" title="No Analysis Yet" sub="Start your first technical analysis." action="+ New Analysis" onAction={() => setShowForm(true)} /> : (
+          <div style={{ display: "grid", gap: 8 }}>
+            {analysis.map((a, i) => (
+              <div key={a.id || i} style={{ ...cardStyle, cursor: "pointer", transition: "all 0.15s" }}
+                onMouseEnter={e => e.currentTarget.style.borderColor = C.primaryBorder}
+                onMouseLeave={e => e.currentTarget.style.borderColor = C.border}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center" }} onClick={() => setSelIdx(i)}>
+                    <div style={{ width: 38, height: 38, borderRadius: 9, background: C.primaryLight, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 800, color: C.primary }}>{a.code?.slice(0,2)}</div>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 800 }}>{a.code} <span style={{ fontSize: 11, color: C.textFaint }}>· {a.sector}</span></div>
+                      <div style={{ fontSize: 11, color: C.textMuted }}>{a.date} · Close: RM {fmt(a.close)}</div>
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <Pill color={a.result?.signal === "BUY" ? C.green : a.result?.signal === "WATCH" ? C.amber : C.textMuted} bg={a.result?.signal === "BUY" ? C.greenLight : a.result?.signal === "WATCH" ? C.amberLight : C.bg}>{a.result?.signal || "—"}</Pill>
+                    <Btn variant="danger" style={{ padding: "5px 10px", fontSize: 11 }} onClick={() => del(i)}>✕</Btn>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {showForm && (
+        <Modal title="New Technical Analysis" onClose={() => { setShowForm(false); setForm(blank); }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <Field label="STOCK CODE"><Inp placeholder="MAYBANK" value={form.code} onChange={e => setForm({...form, code: e.target.value.toUpperCase()})} /></Field>
+            <Field label="DATE"><Inp type="date" value={form.date} onChange={e => setForm({...form, date: e.target.value})} /></Field>
+          </div>
+          <Field label="COMPANY NAME"><Inp placeholder="Malayan Banking Bhd" value={form.name} onChange={e => setForm({...form, name: e.target.value})} /></Field>
+          <Field label="SECTOR"><Sel value={form.sector} onChange={e => setForm({...form, sector: e.target.value})}><option value="">Select...</option>{SECTORS.map(s => <option key={s}>{s}</option>)}</Sel></Field>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, margin: "10px 0 8px" }}>OHLCV DATA</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <Field label="OPEN (RM)"><Inp type="number" step="0.001" placeholder="0.00" value={form.open} onChange={e => setForm({...form, open: e.target.value})} /></Field>
+            <Field label="HIGH (RM)"><Inp type="number" step="0.001" placeholder="0.00" value={form.high} onChange={e => setForm({...form, high: e.target.value})} /></Field>
+            <Field label="LOW (RM)"><Inp type="number" step="0.001" placeholder="0.00" value={form.low} onChange={e => setForm({...form, low: e.target.value})} /></Field>
+            <Field label="CLOSE (RM)"><Inp type="number" step="0.001" placeholder="0.00" value={form.close} onChange={e => setForm({...form, close: e.target.value})} /></Field>
+          </div>
+          <Field label="VOLUME"><Inp type="number" placeholder="e.g. 12300000" value={form.volume} onChange={e => setForm({...form, volume: e.target.value})} /></Field>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, margin: "10px 0 8px" }}>INDICATORS</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <Field label="EMA 200"><Inp type="number" step="0.001" placeholder="e.g. 9.20" value={form.ema200} onChange={e => setForm({...form, ema200: e.target.value})} /></Field>
+            <Field label="SMA20 VOLUME"><Inp type="number" placeholder="e.g. 5000000" value={form.sma20vol} onChange={e => setForm({...form, sma20vol: e.target.value})} /></Field>
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, margin: "10px 0 8px" }}>RISK SETTINGS</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <Field label="CAPITAL (RM)"><Inp type="number" value={form.modal} onChange={e => setForm({...form, modal: e.target.value})} /></Field>
+            <Field label="RRR (1:?)"><Sel value={form.rrr} onChange={e => setForm({...form, rrr: e.target.value})}><option value="2">1:2</option><option value="3">1:3</option><option value="4">1:4</option><option value="5">1:5</option></Sel></Field>
+          </div>
+          <Field label="TECHNIQUES"><TechButtons selected={form.techniques} onChange={t => setForm({...form, techniques: t})} /></Field>
+          <Field label="NOTES"><textarea value={form.note} onChange={e => setForm({...form, note: e.target.value})} placeholder="Analysis notes..." style={{ ...inp, height: 70, resize: "vertical" }} /></Field>
+          <div style={{ display: "flex", gap: 10 }}>
+            <Btn style={{ flex: 1 }} onClick={save}>Run Analysis & Save</Btn>
+            <Btn variant="ghost" onClick={() => { setShowForm(false); setForm(blank); }}>Cancel</Btn>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
+// ============================================================
+// HUNTING LIST PAGE
+// ============================================================
+const HuntingPage = ({ data, onUpdate }) => {
+  const [showForm, setShowForm] = useState(false);
+  const blank = { code: "", name: "", sector: "", entry: "", sl: "", tp: "", lot: "", rrr: "3", signal: "BUY", date: new Date().toISOString().split("T")[0], note: "", techniques: [] };
+  const [form, setForm] = useState(blank);
+  const hunting = data.huntingList || [];
+
+  const save = () => {
+    if (!form.code || !form.entry) return;
+    onUpdate({ ...data, huntingList: [{ ...form, id: Date.now(), status: "Pending" }, ...hunting] });
+    setShowForm(false); setForm(blank);
+  };
+
+  const execute = (i) => {
+    const h = hunting[i];
+    const ji = { id: Date.now(), code: h.code, name: h.name, sector: h.sector, entryPrice: h.entry, sl: h.sl, tp: h.tp, lot: h.lot, rrr: h.rrr, techniques: h.techniques, note: h.note, entryDate: new Date().toISOString().split("T")[0], exitPrice: "", exitDate: "", status: "Open" };
+    const u = [...hunting]; u[i] = { ...h, status: "Executed" };
+    onUpdate({ ...data, huntingList: u, journal: [ji, ...(data.journal || [])] });
+    alert(`${h.code} moved to Trading Journal! ✅`);
+  };
+
+  const skip = (i) => { const u = [...hunting]; u[i] = { ...u[i], status: "Skipped" }; onUpdate({ ...data, huntingList: u }); };
+  const del = (i) => { if (!window.confirm("Remove?")) return; onUpdate({ ...data, huntingList: hunting.filter((_, x) => x !== i) }); };
+
+  const pending = hunting.filter(h => h.status === "Pending");
+  const done = hunting.filter(h => h.status !== "Pending");
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+        <h1 style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.4px" }}>🎯 Hunting List</h1>
+        <Btn onClick={() => setShowForm(true)}>+ Add</Btn>
+      </div>
+
+      {hunting.length === 0 ? <Empty icon="🎯" title="Hunting List Empty" sub="Add stocks you plan to trade tomorrow." action="+ Add" onAction={() => setShowForm(true)} /> : (
+        <>
+          {pending.length > 0 && <>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, marginBottom: 8 }}>PENDING ({pending.length})</div>
+            <div style={{ display: "grid", gap: 10, marginBottom: 18 }}>
+              {hunting.map((h, i) => h.status !== "Pending" ? null : (
+                <div key={h.id || i} style={{ ...cardStyle, borderLeft: `3px solid ${C.green}` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 800 }}>{h.code} <span style={{ fontSize: 11, color: C.textFaint }}>· {h.sector}</span></div>
+                      <div style={{ fontSize: 11, color: C.textMuted }}>{h.name} · {h.date}</div>
+                    </div>
+                    <Pill color={C.green} bg={C.greenLight}>{h.signal}</Pill>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6, marginBottom: 10 }}>
+                    {[["ENTRY", `RM ${fmt(h.entry)}`], ["SL", `RM ${fmt(h.sl)}`], ["TP", `RM ${fmt(h.tp)}`], ["LOT", `${Number(h.lot || 0).toLocaleString()}u`]].map(([l, v]) => (
+                      <div key={l} style={{ background: C.bg, borderRadius: 7, padding: "7px 8px", textAlign: "center" }}>
+                        <div style={{ fontSize: 9, color: C.textFaint, fontWeight: 600 }}>{l}</div>
+                        <div style={{ fontSize: 11, fontWeight: 700, fontFamily: "'DM Mono',monospace" }}>{v}</div>
                       </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                        <div style={{ width: 80 }}><MiniChart candles={candles[s.code]} positive={live.pct >= 0} /></div>
-                        <div style={{ textAlign: "right" }}>
-                          <div style={{ fontSize: 15, fontWeight: 700, fontFamily: "'DM Mono',monospace" }}>RM {live.price.toFixed(2)}</div>
-                          <div style={{ fontSize: 12, color: live.pct >= 0 ? "#059669" : "#DC2626", fontWeight: 600 }}>{live.pct >= 0 ? "▲" : "▼"} {Math.abs(live.pct).toFixed(2)}%</div>
+                    ))}
+                  </div>
+                  {h.techniques?.length > 0 && <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 8 }}>{h.techniques.map(t => <Pill key={t}>{t}</Pill>)}</div>}
+                  {h.note && <div style={{ fontSize: 11, color: C.textMuted, fontStyle: "italic", marginBottom: 10 }}>📝 {h.note}</div>}
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <Btn variant="success" style={{ flex: 1 }} onClick={() => execute(i)}>✓ Executed</Btn>
+                    <Btn variant="ghost" onClick={() => skip(i)}>Skip</Btn>
+                    <Btn variant="danger" style={{ padding: "9px 14px" }} onClick={() => del(i)}>✕</Btn>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>}
+          {done.length > 0 && <>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, marginBottom: 8 }}>HISTORY ({done.length})</div>
+            <div style={{ display: "grid", gap: 6 }}>
+              {hunting.map((h, i) => h.status === "Pending" ? null : (
+                <div key={h.id || i} style={{ ...cardStyle, opacity: 0.75, padding: "14px 18px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div><div style={{ fontSize: 13, fontWeight: 700 }}>{h.code} · {h.date}</div><div style={{ fontSize: 11, color: C.textMuted }}>Entry: RM {fmt(h.entry)}</div></div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <Pill color={h.status === "Executed" ? C.green : C.textMuted} bg={h.status === "Executed" ? C.greenLight : C.bg}>{h.status}</Pill>
+                      <Btn variant="danger" style={{ padding: "4px 10px", fontSize: 11 }} onClick={() => del(i)}>✕</Btn>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>}
+        </>
+      )}
+
+      {showForm && (
+        <Modal title="Add to Hunting List" onClose={() => { setShowForm(false); setForm(blank); }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <Field label="STOCK CODE"><Inp placeholder="INARI" value={form.code} onChange={e => setForm({...form, code: e.target.value.toUpperCase()})} /></Field>
+            <Field label="DATE"><Inp type="date" value={form.date} onChange={e => setForm({...form, date: e.target.value})} /></Field>
+          </div>
+          <Field label="COMPANY NAME"><Inp value={form.name} onChange={e => setForm({...form, name: e.target.value})} /></Field>
+          <Field label="SECTOR"><Sel value={form.sector} onChange={e => setForm({...form, sector: e.target.value})}><option value="">Select...</option>{SECTORS.map(s => <option key={s}>{s}</option>)}</Sel></Field>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <Field label="ENTRY (RM)"><Inp type="number" step="0.01" value={form.entry} onChange={e => setForm({...form, entry: e.target.value})} /></Field>
+            <Field label="STOP LOSS (RM)"><Inp type="number" step="0.01" value={form.sl} onChange={e => setForm({...form, sl: e.target.value})} /></Field>
+            <Field label="TARGET (RM)"><Inp type="number" step="0.01" value={form.tp} onChange={e => setForm({...form, tp: e.target.value})} /></Field>
+            <Field label="LOT SIZE"><Inp type="number" value={form.lot} onChange={e => setForm({...form, lot: e.target.value})} /></Field>
+          </div>
+          <Field label="TECHNIQUES"><TechButtons selected={form.techniques} onChange={t => setForm({...form, techniques: t})} /></Field>
+          <Field label="NOTES"><Inp value={form.note} onChange={e => setForm({...form, note: e.target.value})} /></Field>
+          <div style={{ display: "flex", gap: 10 }}>
+            <Btn style={{ flex: 1 }} onClick={save}>Add to List</Btn>
+            <Btn variant="ghost" style={{ flex: 1 }} onClick={() => { setShowForm(false); setForm(blank); }}>Cancel</Btn>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
+
+// ============================================================
+// TRADING JOURNAL PAGE
+// ============================================================
+const JournalPage = ({ data, onUpdate }) => {
+  const [showForm, setShowForm] = useState(false);
+  const [closeIdx, setCloseIdx] = useState(null);
+  const [exitF, setExitF] = useState({ exitPrice: "", exitDate: new Date().toISOString().split("T")[0], exitNote: "" });
+  const blank = { code: "", name: "", sector: "", entryPrice: "", sl: "", tp: "", lot: "", entryDate: new Date().toISOString().split("T")[0], techniques: [], note: "" };
+  const [form, setForm] = useState(blank);
+  const journal = data.journal || [];
+
+  const closed = journal.filter(j => j.status === "Closed");
+  const open = journal.filter(j => j.status === "Open");
+  const wins = closed.filter(j => j.pl > 0).length;
+  const winRate = closed.length > 0 ? (wins / closed.length) * 100 : 0;
+  const totalPL = closed.reduce((a, j) => a + (j.pl || 0), 0);
+
+  const winsByTechnique = {};
+  TECHNIQUES.forEach(t => {
+    const trades = closed.filter(j => j.techniques?.includes(t));
+    if (trades.length > 0) winsByTechnique[t] = { total: trades.length, wins: trades.filter(j => j.pl > 0).length };
+  });
+
+  const save = () => {
+    if (!form.code || !form.entryPrice) return;
+    onUpdate({ ...data, journal: [{ ...form, id: Date.now(), status: "Open", entryPrice: +form.entryPrice }, ...journal] });
+    setShowForm(false); setForm(blank);
+  };
+
+  const closeT = (i) => {
+    if (!exitF.exitPrice) return;
+    const j = journal[i], ep = +exitF.exitPrice;
+    const pl = (ep - j.entryPrice) * (j.lot || 0);
+    const plPct = ((ep - j.entryPrice) / j.entryPrice) * 100;
+    const u = [...journal]; u[i] = { ...j, exitPrice: ep, exitDate: exitF.exitDate, exitNote: exitF.exitNote, pl, plPct, status: "Closed" };
+    onUpdate({ ...data, journal: u });
+    setCloseIdx(null); setExitF({ exitPrice: "", exitDate: new Date().toISOString().split("T")[0], exitNote: "" });
+  };
+
+  const del = (i) => { if (!window.confirm("Delete?")) return; onUpdate({ ...data, journal: journal.filter((_, x) => x !== i) }); };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+        <h1 style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.4px" }}>📒 Trading Journal</h1>
+        <Btn onClick={() => setShowForm(true)}>+ Add Trade</Btn>
+      </div>
+
+      {/* Stats */}
+      {closed.length > 0 && (
+        <>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 10, marginBottom: 14 }}>
+            <StatCard label="WIN RATE" value={`${winRate.toFixed(1)}%`} sub={`${wins}W / ${closed.length - wins}L`} accent={winRate >= 50 ? C.green : C.red} subColor={winRate >= 50 ? C.green : C.red} />
+            <StatCard label="TOTAL P&L" value={`${totalPL >= 0 ? "+" : ""}RM ${fmt(totalPL)}`} sub={`${closed.length} closed`} accent={totalPL >= 0 ? C.green : C.red} subColor={totalPL >= 0 ? C.green : C.red} />
+            <StatCard label="OPEN" value={open.length.toString()} sub="Active trades" accent={C.amber} />
+            <StatCard label="TOTAL" value={journal.length.toString()} sub="All trades" accent={C.primary} />
+          </div>
+
+          {/* Technique breakdown */}
+          {Object.keys(winsByTechnique).length > 0 && (
+            <div style={{ ...cardStyle, marginBottom: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, marginBottom: 10 }}>PERFORMANCE BY TECHNIQUE</div>
+              <div style={{ display: "grid", gap: 6 }}>
+                {Object.entries(winsByTechnique).map(([t, s]) => {
+                  const wr = (s.wins / s.total) * 100;
+                  return (
+                    <div key={t} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: 12 }}>{t}</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ width: 80, background: C.borderLight, borderRadius: 3, height: 6, overflow: "hidden" }}>
+                          <div style={{ width: `${wr}%`, height: "100%", background: wr >= 60 ? C.green : wr >= 40 ? C.amber : C.red, borderRadius: 3 }} />
                         </div>
-                        <button onClick={e => { e.stopPropagation(); setWatchlist(prev => prev.filter(c => c !== s.code)); }}
-                          style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid #FED7AA", background: "#FEF9C3", cursor: "pointer", fontSize: 15 }}>★</button>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: wr >= 60 ? C.green : wr >= 40 ? C.amber : C.red, width: 40 }}>{wr.toFixed(0)}%</span>
+                        <span style={{ fontSize: 11, color: C.textFaint }}>{s.wins}/{s.total}</span>
                       </div>
                     </div>
                   );
                 })}
               </div>
-            )}
-          </div>
-        )}
+            </div>
+          )}
+        </>
+      )}
 
-        {/* MAKLUMAT */}
-        {page === "screener" && !selected && (
-          <div className="card">
-            <h1 style={{ fontSize: 20, fontWeight: 800, marginBottom: 20, letterSpacing: "-0.5px" }}>⊙ Maklumat Saham</h1>
-            <div style={{ display: "grid", gap: 10 }}>
-              {MY_PORTFOLIO.map(s => {
-                const live = stocks[s.code];
-                if (!live) return <LoadingCard key={s.code} />;
-                return (
-                  <div key={s.code} className="row-hover" style={{ background: "#fff", borderRadius: 14, padding: "16px 20px", border: "1px solid #E2E8F0", cursor: "pointer", boxShadow: "0 1px 3px rgba(0,0,0,0.04)", transition: "all 0.15s" }} onClick={() => goDetail(s.code)}>
-                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                        <div style={{ width: 42, height: 42, borderRadius: 11, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#0F4C81" }}>{s.display.slice(0, 2)}</div>
-                        <div>
-                          <div style={{ fontSize: 14, fontWeight: 800 }}>{s.display} <span style={{ fontSize: 11, color: "#94A3B8", fontWeight: 400 }}>· {s.sector}</span></div>
-                          <div style={{ fontSize: 12, color: "#64748B" }}>{s.name}</div>
-                        </div>
+      {journal.length === 0 ? <Empty icon="📒" title="No Trades Yet" sub="Start recording your trades." action="+ Add Trade" onAction={() => setShowForm(true)} /> : (
+        <>
+          {open.length > 0 && <>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, marginBottom: 8 }}>OPEN ({open.length})</div>
+            <div style={{ display: "grid", gap: 10, marginBottom: 18 }}>
+              {journal.map((j, i) => j.status !== "Open" ? null : (
+                <div key={j.id || i} style={{ ...cardStyle, borderLeft: `3px solid ${C.amber}` }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 14, fontWeight: 800 }}>{j.code} <span style={{ fontSize: 11, color: C.textFaint }}>· {j.sector}</span></div>
+                      <div style={{ fontSize: 11, color: C.textMuted }}>Entry: RM {fmt(j.entryPrice)} · {j.entryDate} · {Number(j.lot || 0).toLocaleString()} units</div>
+                    </div>
+                    <Pill color={C.amber} bg={C.amberLight}>OPEN</Pill>
+                  </div>
+                  <div style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
+                    {j.sl && <span style={{ fontSize: 11 }}>🛡 SL: <strong>RM {fmt(j.sl)}</strong></span>}
+                    {j.tp && <span style={{ fontSize: 11 }}>🎯 TP: <strong>RM {fmt(j.tp)}</strong></span>}
+                  </div>
+                  {j.techniques?.length > 0 && <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 8 }}>{j.techniques.map(t => <Pill key={t}>{t}</Pill>)}</div>}
+
+                  {closeIdx === i ? (
+                    <div style={{ background: C.bg, borderRadius: 8, padding: 12, marginBottom: 8 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 10 }}>Close Trade</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+                        <Field label="EXIT PRICE (RM)"><Inp type="number" step="0.01" value={exitF.exitPrice} onChange={e => setExitF({...exitF, exitPrice: e.target.value})} /></Field>
+                        <Field label="EXIT DATE"><Inp type="date" value={exitF.exitDate} onChange={e => setExitF({...exitF, exitDate: e.target.value})} /></Field>
                       </div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                        <div style={{ textAlign: "right" }}>
-                          <div style={{ fontSize: 16, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>RM {live.price.toFixed(2)}</div>
-                          <Pill color={live.pct >= 0 ? "#059669" : "#DC2626"} bg={live.pct >= 0 ? "#D1FAE5" : "#FEE2E2"}>
-                            {live.pct >= 0 ? "▲" : "▼"} {Math.abs(live.pct).toFixed(2)}%
-                          </Pill>
-                        </div>
-                        <button onClick={e => { e.stopPropagation(); setWatchlist(prev => prev.includes(s.code) ? prev.filter(c => c !== s.code) : [...prev, s.code]); }}
-                          style={{ width: 32, height: 32, borderRadius: 8, border: "1px solid #E2E8F0", background: watchlist.includes(s.code) ? "#FEF9C3" : "#F8FAFC", cursor: "pointer", fontSize: 15 }}>
-                          {watchlist.includes(s.code) ? "★" : "☆"}
-                        </button>
+                      <Field label="REASON / NOTE"><Inp placeholder="Hit TP / SL / Manual exit..." value={exitF.exitNote} onChange={e => setExitF({...exitF, exitNote: e.target.value})} /></Field>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <Btn variant="success" style={{ flex: 1 }} onClick={() => closeT(i)}>Confirm Close</Btn>
+                        <Btn variant="ghost" onClick={() => setCloseIdx(null)}>Cancel</Btn>
                       </div>
                     </div>
-                    <div style={{ display: "flex", gap: 16, marginTop: 10, paddingTop: 10, borderTop: "1px solid #F1F5F9", flexWrap: "wrap" }}>
-                      {[["P/E Ratio", live.pe + "x"], ["Dividen Yield", live.dy + "%"], ["ROE", live.roe + "%"], ["52W High", "RM " + live.high], ["52W Low", "RM " + live.low]].map(([l, v]) => (
-                        <div key={l}>
-                          <div style={{ fontSize: 10, color: "#94A3B8" }}>{l}</div>
-                          <div style={{ fontSize: 12, fontWeight: 700, fontFamily: "'DM Mono',monospace" }}>{v}</div>
-                        </div>
-                      ))}
+                  ) : (
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <Btn variant="success" onClick={() => setCloseIdx(i)}>Close Trade</Btn>
+                      <Btn variant="danger" style={{ padding: "9px 14px" }} onClick={() => del(i)}>✕</Btn>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* DETAIL */}
-        {page === "detail" && selected && (
-          <div className="card">
-            <button onClick={() => { setPage("screener"); setSelected(null); }}
-              style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, color: "#0F4C81", fontWeight: 700, marginBottom: 16, display: "flex", alignItems: "center", gap: 6 }}>
-              ← Kembali
-            </button>
-
-            <div style={{ background: "#fff", borderRadius: 14, padding: "22px", border: "1px solid #E2E8F0", marginBottom: 14, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", flexWrap: "wrap", gap: 12 }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                  <div style={{ width: 48, height: 48, borderRadius: 12, background: "#EFF6FF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: "#0F4C81" }}>{selected.display?.slice(0, 2)}</div>
-                  <div>
-                    <h1 style={{ fontSize: 20, fontWeight: 800, letterSpacing: "-0.5px" }}>{selected.display}</h1>
-                    <p style={{ fontSize: 13, color: "#64748B" }}>{selected.name} · <Pill>{selected.sector}</Pill></p>
-                  </div>
-                </div>
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 30, fontWeight: 800, fontFamily: "'DM Mono',monospace", letterSpacing: "-1px" }}>RM {selected.price?.toFixed(2)}</div>
-                  <div style={{ fontSize: 14, color: (selected.pct || 0) >= 0 ? "#059669" : "#DC2626", fontWeight: 700 }}>
-                    {(selected.pct || 0) >= 0 ? "▲" : "▼"} RM {Math.abs(selected.change || 0).toFixed(2)} ({Math.abs(selected.pct || 0).toFixed(2)}%)
-                  </div>
-                </div>
-              </div>
-              <div style={{ marginTop: 18, background: "#F8FAFC", borderRadius: 10, padding: "14px 12px", border: "1px solid #E2E8F0" }}>
-                <MiniChart candles={candles[selected.code]} positive={(selected.pct || 0) >= 0} />
-                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: "#94A3B8", marginTop: 4 }}>
-                  <span>30 hari lepas</span><span>Semasa</span>
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 10, marginBottom: 14 }}>
-              {[
-                ["P/E Ratio",     (selected.pe  || "—") + "x"],
-                ["Dividen Yield", (selected.dy  || "—") + "%"],
-                ["ROE",           (selected.roe || "—") + "%"],
-                ["52W Tinggi",    "RM " + (selected.high || "—")],
-                ["52W Rendah",    "RM " + (selected.low  || "—")],
-                ["Volume",        selected.volume || "—"],
-              ].map(([l, v]) => (
-                <div key={l} style={{ background: "#fff", borderRadius: 10, padding: "14px 16px", border: "1px solid #E2E8F0" }}>
-                  <div style={{ fontSize: 10, color: "#94A3B8", marginBottom: 5 }}>{l}</div>
-                  <div style={{ fontSize: 16, fontWeight: 700, fontFamily: "'DM Mono',monospace" }}>{v}</div>
+                  )}
                 </div>
               ))}
             </div>
+          </>}
 
-            {(() => {
-              const pos = MY_PORTFOLIO.find(p => p.code === selected.code);
-              if (!pos) return null;
-              const cost  = pos.unit * pos.beliPrice;
-              const curr  = pos.unit * selected.price;
-              const pl    = curr - cost;
-              const plPct = (pl / cost) * 100;
-              return (
-                <div style={{ background: "linear-gradient(135deg,#0F4C81,#1D6FB8)", borderRadius: 14, padding: "20px 22px", color: "#fff", marginBottom: 14 }}>
-                  <div style={{ fontSize: 11, opacity: 0.75, marginBottom: 10 }}>📊 KEDUDUKAN KAMU</div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
-                    {[
-                      ["Unit Dipegang", pos.unit.toLocaleString() + " unit"],
-                      ["Harga Beli",    "RM " + pos.beliPrice.toFixed(2)],
-                      ["Kos Modal",     "RM " + fmt(cost)],
-                      ["Nilai Semasa",  "RM " + fmt(curr)],
-                    ].map(([l, v]) => (
-                      <div key={l}>
-                        <div style={{ fontSize: 10, opacity: 0.65, marginBottom: 3 }}>{l}</div>
-                        <div style={{ fontSize: 14, fontWeight: 700, fontFamily: "'DM Mono',monospace" }}>{v}</div>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid rgba(255,255,255,0.2)", display: "flex", justifyContent: "space-between" }}>
+          {closed.length > 0 && <>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, marginBottom: 8 }}>CLOSED ({closed.length})</div>
+            <div style={{ display: "grid", gap: 8 }}>
+              {journal.map((j, i) => j.status !== "Closed" ? null : (
+                <div key={j.id || i} style={{ ...cardStyle, borderLeft: `3px solid ${j.pl >= 0 ? C.green : C.red}`, padding: "14px 18px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                     <div>
-                      <div style={{ fontSize: 10, opacity: 0.65 }}>UNTUNG / RUGI</div>
-                      <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>{pl >= 0 ? "+" : ""}RM {fmt(pl)}</div>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
+                        <div style={{ fontSize: 13, fontWeight: 800 }}>{j.code}</div>
+                        <Pill color={j.pl >= 0 ? C.green : C.red} bg={j.pl >= 0 ? C.greenLight : C.redLight}>{j.pl >= 0 ? "WIN ✓" : "LOSE ✗"}</Pill>
+                      </div>
+                      <div style={{ fontSize: 11, color: C.textMuted }}>RM {fmt(j.entryPrice)} → RM {fmt(j.exitPrice)} · {j.entryDate} to {j.exitDate}</div>
+                      {j.techniques?.length > 0 && <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>{j.techniques.map(t => <Pill key={t}>{t}</Pill>)}</div>}
+                      {j.exitNote && <div style={{ fontSize: 11, color: C.textMuted, fontStyle: "italic", marginTop: 3 }}>📝 {j.exitNote}</div>}
                     </div>
                     <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: 10, opacity: 0.65 }}>PERATUSAN</div>
-                      <div style={{ fontSize: 20, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>{plPct >= 0 ? "+" : ""}{plPct.toFixed(2)}%</div>
+                      <div style={{ fontSize: 15, fontWeight: 800, color: j.pl >= 0 ? C.green : C.red, fontFamily: "'DM Mono',monospace" }}>{j.pl >= 0 ? "+" : ""}RM {fmt(j.pl)}</div>
+                      <div style={{ fontSize: 11, color: j.pl >= 0 ? C.green : C.red }}>{fmtPct(j.plPct)}</div>
+                      <Btn variant="danger" style={{ padding: "3px 9px", fontSize: 10, marginTop: 5 }} onClick={() => del(i)}>✕</Btn>
                     </div>
                   </div>
                 </div>
-              );
-            })()}
+              ))}
+            </div>
+          </>}
+        </>
+      )}
 
-            <button onClick={() => setWatchlist(prev => prev.includes(selected.code) ? prev.filter(c => c !== selected.code) : [...prev, selected.code])}
-              style={{ width: "100%", padding: 14, borderRadius: 12, border: "none", background: watchlist.includes(selected.code) ? "#F1F5F9" : "#0F4C81", color: watchlist.includes(selected.code) ? "#64748B" : "#fff", fontSize: 14, fontWeight: 700, cursor: "pointer" }}>
-              {watchlist.includes(selected.code) ? "★ Dalam Watchlist" : "☆ Tambah ke Watchlist"}
-            </button>
+      {showForm && (
+        <Modal title="Add Trade Record" onClose={() => { setShowForm(false); setForm(blank); }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <Field label="STOCK CODE"><Inp placeholder="MAYBANK" value={form.code} onChange={e => setForm({...form, code: e.target.value.toUpperCase()})} /></Field>
+            <Field label="ENTRY DATE"><Inp type="date" value={form.entryDate} onChange={e => setForm({...form, entryDate: e.target.value})} /></Field>
           </div>
-        )}
+          <Field label="COMPANY NAME"><Inp value={form.name} onChange={e => setForm({...form, name: e.target.value})} /></Field>
+          <Field label="SECTOR"><Sel value={form.sector} onChange={e => setForm({...form, sector: e.target.value})}><option value="">Select...</option>{SECTORS.map(s => <option key={s}>{s}</option>)}</Sel></Field>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <Field label="ENTRY PRICE (RM)"><Inp type="number" step="0.01" value={form.entryPrice} onChange={e => setForm({...form, entryPrice: e.target.value})} /></Field>
+            <Field label="LOT SIZE"><Inp type="number" value={form.lot} onChange={e => setForm({...form, lot: e.target.value})} /></Field>
+            <Field label="STOP LOSS (RM)"><Inp type="number" step="0.01" value={form.sl} onChange={e => setForm({...form, sl: e.target.value})} /></Field>
+            <Field label="TARGET (RM)"><Inp type="number" step="0.01" value={form.tp} onChange={e => setForm({...form, tp: e.target.value})} /></Field>
+          </div>
+          <Field label="TECHNIQUES"><TechButtons selected={form.techniques} onChange={t => setForm({...form, techniques: t})} /></Field>
+          <Field label="NOTES"><Inp value={form.note} onChange={e => setForm({...form, note: e.target.value})} /></Field>
+          <div style={{ display: "flex", gap: 10 }}>
+            <Btn style={{ flex: 1 }} onClick={save}>Save Trade</Btn>
+            <Btn variant="ghost" style={{ flex: 1 }} onClick={() => { setShowForm(false); setForm(blank); }}>Cancel</Btn>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+};
 
+// ============================================================
+// SETTINGS PAGE
+// ============================================================
+const SettingsPage = ({ data, onUpdate, onLogout }) => {
+  const [f, setF] = useState({ ...data.settings });
+  const [saved, setSaved] = useState(false);
+
+  const saveSett = () => { onUpdate({ ...data, settings: { ...f, setupDone: true } }); setSaved(true); setTimeout(() => setSaved(false), 2000); };
+
+  const exportData = () => {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a"); a.href = url; a.download = `legasi-studio-${new Date().toISOString().split("T")[0]}.json`; a.click();
+  };
+
+  const importData = (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => { try { onUpdate(JSON.parse(ev.target.result)); alert("Imported!"); } catch { alert("Invalid file."); } };
+    reader.readAsText(file);
+  };
+
+  const clearAll = () => { if (!window.confirm("Clear ALL data?")) return; if (!window.confirm("Really sure?")) return; onUpdate(defaultData()); };
+
+  return (
+    <div>
+      <h1 style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.4px", marginBottom: 18 }}>⚙️ Settings</h1>
+
+      <div style={{ ...cardStyle, marginBottom: 14 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 14 }}>👤 Trading Profile</div>
+        <Field label="BROKER"><Sel value={f.broker} onChange={e => setF({...f, broker: e.target.value})}><option value="">Select...</option>{BROKERS.map(b => <option key={b}>{b}</option>)}</Sel></Field>
+        <Field label="TRADING CAPITAL (RM)"><Inp type="number" value={f.modal} onChange={e => setF({...f, modal: e.target.value})} /></Field>
+        <Field label="DEFAULT RRR (1:?)"><Sel value={f.defaultRRR} onChange={e => setF({...f, defaultRRR: e.target.value})}><option value="2">1:2</option><option value="3">1:3</option><option value="4">1:4</option><option value="5">1:5</option></Sel></Field>
+        <Field label="PORTFOLIO PIN (4 digits)"><Inp type="password" maxLength={4} value={f.pin} onChange={e => setF({...f, pin: e.target.value.replace(/\D/g, "")})} /></Field>
+        <Btn onClick={saveSett}>{saved ? "✓ Saved!" : "Save Settings"}</Btn>
+      </div>
+
+      <div style={{ ...cardStyle, marginBottom: 14 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 14 }}>💾 Data Management</div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <Btn variant="ghost" style={{ textAlign: "left" }} onClick={exportData}>📥 Export Backup</Btn>
+          <label style={{ ...btn, background: "#EFF6FF", color: C.primary, border: `1px solid ${C.primaryBorder}`, textAlign: "left", cursor: "pointer" }}>
+            📤 Import Backup <input type="file" accept=".json" onChange={importData} style={{ display: "none" }} />
+          </label>
+          <Btn variant="danger" style={{ textAlign: "left" }} onClick={clearAll}>🗑 Clear All Data</Btn>
+        </div>
+      </div>
+
+      <div style={{ ...cardStyle }}>
+        <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 10 }}>🔐 Session</div>
+        <div style={{ fontSize: 12, color: C.textMuted, marginBottom: 14 }}>App password: <strong>legasi2026</strong> (edit in code to change)</div>
+        <Btn variant="danger" onClick={onLogout}>🚪 Logout</Btn>
+      </div>
+
+      <div style={{ textAlign: "center", marginTop: 24, fontSize: 10, color: C.textFaint }}>
+        LEGASI STUDIO v2.0 · Encik Bos<br />
+        SYSTEM BUILT BY COMMAND, TRADED BY DISCIPLINE
+      </div>
+    </div>
+  );
+};
+
+// ============================================================
+// ROOT APP
+// ============================================================
+export default function App() {
+  const [loggedIn, setLoggedIn] = useState(false);
+  const [pinUnlocked, setPinUnlocked] = useState(false);
+  const [showPin, setShowPin] = useState(false);
+  const [page, setPage] = useState("portfolio");
+  const [data, setData] = useState(() => loadData() || defaultData());
+
+  useEffect(() => { saveData(data); }, [data]);
+
+  if (!loggedIn) return <LoginScreen onLogin={() => setLoggedIn(true)} />;
+  if (!data.settings?.setupDone) return <SetupWizard onComplete={(settings) => setData({ ...data, settings })} />;
+
+  const NAV = [
+    { id: "portfolio", label: "Portfolio", icon: "◎" },
+    { id: "watchlist", label: "Watchlist", icon: "★" },
+    { id: "technical", label: "Analysis",  icon: "❤️" },
+    { id: "hunting",   label: "Hunting",   icon: "🎯" },
+    { id: "journal",   label: "Journal",   icon: "📒" },
+    { id: "settings",  label: "Settings",  icon: "⚙️" },
+  ];
+
+  return (
+    <div style={{ fontFamily: "'Sora',sans-serif", background: C.bg, minHeight: "100vh", color: C.text }}>
+      <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600;700;800&family=DM+Mono:wght@400;500;600&display=swap');
+        * { box-sizing:border-box; margin:0; padding:0; }
+        @keyframes fadeIn { from{opacity:0;transform:translateY(8px)} to{opacity:1;transform:translateY(0)} }
+        textarea, select, input { font-family:'Sora',sans-serif; }
+      `}</style>
+
+      <header style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 18px", height: 54, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+          <div style={{ width: 30, height: 30, background: `linear-gradient(135deg,${C.primary},#2563EB)`, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ color: "#fff", fontSize: 13, fontWeight: 800 }}>L</span>
+          </div>
+          <span style={{ fontSize: 14, fontWeight: 800, letterSpacing: "-0.3px" }}>LEGASI<span style={{ color: C.primary }}> STUDIO</span></span>
+        </div>
+        <div style={{ fontSize: 11, color: C.textMuted }}>{getTime()}, <strong>Encik Bos</strong> 👋</div>
+      </header>
+
+      <nav style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 14px", display: "flex", overflowX: "auto" }}>
+        {NAV.map(n => (
+          <button key={n.id} onClick={() => setPage(n.id)}
+            style={{ padding: "11px 12px", border: "none", background: "none", cursor: "pointer", fontSize: 11, fontWeight: page === n.id ? 700 : 400, color: page === n.id ? C.primary : C.textMuted, borderBottom: page === n.id ? `2.5px solid ${C.primary}` : "2.5px solid transparent", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4, transition: "all 0.15s", fontFamily: "'Sora',sans-serif" }}>
+            {n.icon} {n.label}
+          </button>
+        ))}
+      </nav>
+
+      <main style={{ maxWidth: 880, margin: "0 auto", padding: "18px 12px", animation: "fadeIn 0.25s ease" }}>
+        {page === "portfolio" && <PortfolioPage data={data} onUpdate={setData} pinUnlocked={pinUnlocked} onRequestPin={() => setShowPin(true)} />}
+        {page === "watchlist" && <WatchlistPage data={data} onUpdate={setData} />}
+        {page === "technical" && <TechnicalPage data={data} onUpdate={setData} />}
+        {page === "hunting"   && <HuntingPage   data={data} onUpdate={setData} />}
+        {page === "journal"   && <JournalPage   data={data} onUpdate={setData} />}
+        {page === "settings"  && <SettingsPage  data={data} onUpdate={setData} onLogout={() => { setLoggedIn(false); setPinUnlocked(false); }} />}
       </main>
 
-      <footer style={{ textAlign: "center", padding: "24px 16px", fontSize: 11, color: "#94A3B8" }}>
-        SahamIQ · Data via Yahoo Finance · {usingFallback ? "Demo mode — semak sambungan internet" : "Data KLSE (15 min delay)"}
+      {showPin && <PinScreen savedPin={data.settings?.pin || "1234"} onUnlock={() => { setPinUnlocked(true); setShowPin(false); }} onCancel={() => setShowPin(false)} />}
+
+      <footer style={{ textAlign: "center", padding: "18px", fontSize: 10, color: C.textFaint }}>
+        LEGASI STUDIO v2.0 · All data stored locally · Private & Secure
       </footer>
     </div>
   );
