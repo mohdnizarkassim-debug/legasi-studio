@@ -868,180 +868,480 @@ const HuntingPage = ({ data, onUpdate }) => {
 };
 
 // ============================================================
-// TRADING JOURNAL PAGE
+// TRADING JOURNAL PAGE — LEGASI STUDIO BLUEPRINT V1.1
 // ============================================================
+const TRADE_TYPES = ["Breakout", "Pullback", "Reversal", "Momentum", "Gap Up", "Accumulation"];
+const MARKET_CONDITIONS = ["Bull Market", "Bear Market", "Sideways", "High Volatility", "Low Volatility"];
+const EXIT_REASONS = ["Hit TP1", "Hit TP2", "Hit SL", "Trailing Stop", "Manual Exit", "News Event", "Cut Loss"];
+
+const PRE_CHECKLIST = [
+  "Close > EMA 200?",
+  "Bullish Marubozu confirmed?",
+  "Volume > 1.5x SMA20?",
+  "Breakout / Resistance break confirmed?",
+  "SL dah set kat broker?",
+  "Lot size ikut 20% rule?",
+  "RRR minimum 1:3?",
+];
+
 const JournalPage = ({ data, onUpdate }) => {
+  const [tab, setTab] = useState("open");
   const [showForm, setShowForm] = useState(false);
+  const [showDetail, setShowDetail] = useState(null);
   const [closeIdx, setCloseIdx] = useState(null);
-  const [exitF, setExitF] = useState({ exitPrice: "", exitDate: new Date().toISOString().split("T")[0], exitNote: "" });
-  const blank = { code: "", name: "", sector: "", entryPrice: "", sl: "", tp: "", lot: "", entryDate: new Date().toISOString().split("T")[0], techniques: [], note: "" };
-  const [form, setForm] = useState(blank);
+  const [partialIdx, setPartialIdx] = useState(null);
+  const [exitF, setExitF] = useState({ exitPrice: "", exitDate: new Date().toISOString().split("T")[0], exitNote: "", exitReason: "", postMortem: { whatWorked: "", whatFailed: "", lesson: "" } });
+  const [partialF, setPartialF] = useState({ price: "", lot: "", date: new Date().toISOString().split("T")[0] });
+
+  const blankForm = {
+    code: "", name: "", sector: "", tradeType: "", marketCondition: "",
+    open: "", high: "", low: "", close: "", volume: "", sma20vol: "", ema200val: "",
+    entryPrice: "", sl: "", tp1: "", tp2: "", lot: "", rrr: "3",
+    entryDate: new Date().toISOString().split("T")[0],
+    techniques: [], note: "", checklist: [],
+    partialExits: [], status: "Open",
+  };
+  const [form, setForm] = useState(blankForm);
   const journal = data.journal || [];
 
+  // ── STATS ──
   const closed = journal.filter(j => j.status === "Closed");
   const open = journal.filter(j => j.status === "Open");
-  const wins = closed.filter(j => j.pl > 0).length;
+  const wins = closed.filter(j => (j.totalPL || j.pl || 0) > 0).length;
+  const losses = closed.length - wins;
   const winRate = closed.length > 0 ? (wins / closed.length) * 100 : 0;
-  const totalPL = closed.reduce((a, j) => a + (j.pl || 0), 0);
+  const totalPL = closed.reduce((a, j) => a + (j.totalPL || j.pl || 0), 0);
+  const avgWin = wins > 0 ? closed.filter(j => (j.totalPL||j.pl||0)>0).reduce((a,j)=>a+(j.totalPL||j.pl||0),0)/wins : 0;
+  const avgLoss = losses > 0 ? closed.filter(j => (j.totalPL||j.pl||0)<=0).reduce((a,j)=>a+(j.totalPL||j.pl||0),0)/losses : 0;
 
-  const winsByTechnique = {};
+  // Consecutive loss check
+  const recentTrades = [...closed].slice(-5);
+  const consecLoss = recentTrades.reverse().findIndex(j => (j.totalPL||j.pl||0) > 0);
+  const consecLossCount = consecLoss === -1 ? recentTrades.length : consecLoss;
+
+  // Monthly breakdown
+  const monthlyPL = {};
+  closed.forEach(j => {
+    const m = (j.exitDate || "").slice(0,7);
+    if (m) monthlyPL[m] = (monthlyPL[m] || 0) + (j.totalPL||j.pl||0);
+  });
+
+  // Technique stats
+  const techStats = {};
   TECHNIQUES.forEach(t => {
     const trades = closed.filter(j => j.techniques?.includes(t));
-    if (trades.length > 0) winsByTechnique[t] = { total: trades.length, wins: trades.filter(j => j.pl > 0).length };
+    if (trades.length > 0) techStats[t] = { total: trades.length, wins: trades.filter(j => (j.totalPL||j.pl||0)>0).length };
+  });
+
+  // Sector stats
+  const sectorStats = {};
+  closed.forEach(j => {
+    if (!j.sector) return;
+    if (!sectorStats[j.sector]) sectorStats[j.sector] = { total: 0, wins: 0, pl: 0 };
+    sectorStats[j.sector].total++;
+    if ((j.totalPL||j.pl||0) > 0) sectorStats[j.sector].wins++;
+    sectorStats[j.sector].pl += (j.totalPL||j.pl||0);
   });
 
   const save = () => {
     if (!form.code || !form.entryPrice) return;
-    onUpdate({ ...data, journal: [{ ...form, id: Date.now(), status: "Open", entryPrice: +form.entryPrice }, ...journal] });
-    setShowForm(false); setForm(blank);
+    const entry = +form.entryPrice;
+    const sl = +form.sl;
+    const risk = entry - sl;
+    const tp1 = form.tp1 ? +form.tp1 : entry + (risk * 2);
+    const tp2 = form.tp2 ? +form.tp2 : entry + (risk * 3);
+    const item = { ...form, id: Date.now(), entryPrice: entry, sl, tp1: +tp1.toFixed(3), tp2: +tp2.toFixed(3), lot: +form.lot, status: "Open", partialExits: [], totalPL: 0 };
+    onUpdate({ ...data, journal: [item, ...journal] });
+    setShowForm(false); setForm(blankForm);
   };
 
-  const closeT = (i) => {
-    if (!exitF.exitPrice) return;
-    const j = journal[i], ep = +exitF.exitPrice;
-    const pl = (ep - j.entryPrice) * (j.lot || 0);
-    const plPct = ((ep - j.entryPrice) / j.entryPrice) * 100;
-    const u = [...journal]; u[i] = { ...j, exitPrice: ep, exitDate: exitF.exitDate, exitNote: exitF.exitNote, pl, plPct, status: "Closed" };
+  const doPartialExit = (i) => {
+    if (!partialF.price || !partialF.lot) return;
+    const j = journal[i];
+    const pLot = +partialF.lot;
+    const pPrice = +partialF.price;
+    const pPL = (pPrice - j.entryPrice) * pLot;
+    const exits = [...(j.partialExits||[]), { price: pPrice, lot: pLot, date: partialF.date, pl: pPL }];
+    const totalExitedLot = exits.reduce((a,e)=>a+e.lot,0);
+    const totalPLSoFar = exits.reduce((a,e)=>a+e.pl,0);
+    const u = [...journal];
+    u[i] = { ...j, partialExits: exits, totalPL: totalPLSoFar, remainingLot: (j.lot - totalExitedLot) };
     onUpdate({ ...data, journal: u });
-    setCloseIdx(null); setExitF({ exitPrice: "", exitDate: new Date().toISOString().split("T")[0], exitNote: "" });
+    setPartialIdx(null); setPartialF({ price: "", lot: "", date: new Date().toISOString().split("T")[0] });
   };
 
-  const del = (i) => { if (!window.confirm("Delete?")) return; onUpdate({ ...data, journal: journal.filter((_, x) => x !== i) }); };
+  const closeTrade = (i) => {
+    if (!exitF.exitPrice) return;
+    const j = journal[i];
+    const ep = +exitF.exitPrice;
+    const remLot = j.remainingLot !== undefined ? j.remainingLot : j.lot;
+    const finalPL = (ep - j.entryPrice) * remLot;
+    const totalPLFinal = (j.totalPL || 0) + finalPL;
+    const plPct = ((ep - j.entryPrice) / j.entryPrice) * 100;
+    const u = [...journal];
+    u[i] = { ...j, exitPrice: ep, exitDate: exitF.exitDate, exitReason: exitF.exitReason, exitNote: exitF.exitNote, postMortem: exitF.postMortem, totalPL: totalPLFinal, pl: totalPLFinal, plPct, status: "Closed" };
+    onUpdate({ ...data, journal: u });
+    setCloseIdx(null); setExitF({ exitPrice: "", exitDate: new Date().toISOString().split("T")[0], exitNote: "", exitReason: "", postMortem: { whatWorked: "", whatFailed: "", lesson: "" } });
+  };
+
+  const del = (i) => { if (!window.confirm("Delete trade record?")) return; onUpdate({ ...data, journal: journal.filter((_,x)=>x!==i) }); };
+
+  const TABS = [
+    { id: "open", label: `Open (${open.length})` },
+    { id: "closed", label: `Closed (${closed.length})` },
+    { id: "stats", label: "Performance" },
+  ];
 
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <h1 style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.4px" }}>📒 Trading Journal</h1>
         <Btn onClick={() => setShowForm(true)}>+ Add Trade</Btn>
       </div>
 
-      {/* Stats */}
+      {/* Consecutive Loss Warning */}
+      {consecLossCount >= 3 && (
+        <div style={{ background: "#FEF2F2", border: `1px solid #FECACA`, borderRadius: 10, padding: "12px 16px", marginBottom: 14, display: "flex", gap: 10, alignItems: "center" }}>
+          <span style={{ fontSize: 20 }}>⚠️</span>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.red }}>AMARAN: {consecLossCount} Kekalahan Berturut-turut!</div>
+            <div style={{ fontSize: 11, color: C.red }}>Pertimbangkan untuk rehat sebentar. Semak semula strategi sebelum trade seterusnya.</div>
+          </div>
+        </div>
+      )}
+
+      {/* Quick Stats Strip */}
       {closed.length > 0 && (
-        <>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 10, marginBottom: 14 }}>
-            <StatCard label="WIN RATE" value={`${winRate.toFixed(1)}%`} sub={`${wins}W / ${closed.length - wins}L`} accent={winRate >= 50 ? C.green : C.red} subColor={winRate >= 50 ? C.green : C.red} />
-            <StatCard label="TOTAL P&L" value={`${totalPL >= 0 ? "+" : ""}RM ${fmt(totalPL)}`} sub={`${closed.length} closed`} accent={totalPL >= 0 ? C.green : C.red} subColor={totalPL >= 0 ? C.green : C.red} />
-            <StatCard label="OPEN" value={open.length.toString()} sub="Active trades" accent={C.amber} />
-            <StatCard label="TOTAL" value={journal.length.toString()} sub="All trades" accent={C.primary} />
-          </div>
-
-          {/* Technique breakdown */}
-          {Object.keys(winsByTechnique).length > 0 && (
-            <div style={{ ...cardStyle, marginBottom: 14 }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, marginBottom: 10 }}>PERFORMANCE BY TECHNIQUE</div>
-              <div style={{ display: "grid", gap: 6 }}>
-                {Object.entries(winsByTechnique).map(([t, s]) => {
-                  const wr = (s.wins / s.total) * 100;
-                  return (
-                    <div key={t} style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                      <span style={{ fontSize: 12 }}>{t}</span>
-                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                        <div style={{ width: 80, background: C.borderLight, borderRadius: 3, height: 6, overflow: "hidden" }}>
-                          <div style={{ width: `${wr}%`, height: "100%", background: wr >= 60 ? C.green : wr >= 40 ? C.amber : C.red, borderRadius: 3 }} />
-                        </div>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: wr >= 60 ? C.green : wr >= 40 ? C.amber : C.red, width: 40 }}>{wr.toFixed(0)}%</span>
-                        <span style={{ fontSize: 11, color: C.textFaint }}>{s.wins}/{s.total}</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 10, marginBottom: 16 }}>
+          <StatCard label="WIN RATE" value={`${winRate.toFixed(1)}%`} sub={`${wins}W / ${losses}L`} accent={winRate>=50?C.green:C.red} subColor={winRate>=50?C.green:C.red} />
+          <StatCard label="TOTAL P&L" value={`${totalPL>=0?"+":""}RM ${fmt(totalPL)}`} sub={`${closed.length} trades`} accent={totalPL>=0?C.green:C.red} subColor={totalPL>=0?C.green:C.red} />
+          <StatCard label="AVG WIN" value={`+RM ${fmt(avgWin)}`} sub="Per winning trade" accent={C.green} />
+          <StatCard label="AVG LOSS" value={`RM ${fmt(avgLoss)}`} sub="Per losing trade" accent={C.red} />
+        </div>
       )}
 
-      {journal.length === 0 ? <Empty icon="📒" title="No Trades Yet" sub="Start recording your trades." action="+ Add Trade" onAction={() => setShowForm(true)} /> : (
-        <>
-          {open.length > 0 && <>
-            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, marginBottom: 8 }}>OPEN ({open.length})</div>
-            <div style={{ display: "grid", gap: 10, marginBottom: 18 }}>
-              {journal.map((j, i) => j.status !== "Open" ? null : (
-                <div key={j.id || i} style={{ ...cardStyle, borderLeft: `3px solid ${C.amber}` }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 800 }}>{j.code} <span style={{ fontSize: 11, color: C.textFaint }}>· {j.sector}</span></div>
-                      <div style={{ fontSize: 11, color: C.textMuted }}>Entry: RM {fmt(j.entryPrice)} · {j.entryDate} · {Number(j.lot || 0).toLocaleString()} units</div>
-                    </div>
-                    <Pill color={C.amber} bg={C.amberLight}>OPEN</Pill>
-                  </div>
-                  <div style={{ display: "flex", gap: 10, marginBottom: 8, flexWrap: "wrap" }}>
-                    {j.sl && <span style={{ fontSize: 11 }}>🛡 SL: <strong>RM {fmt(j.sl)}</strong></span>}
-                    {j.tp && <span style={{ fontSize: 11 }}>🎯 TP: <strong>RM {fmt(j.tp)}</strong></span>}
-                  </div>
-                  {j.techniques?.length > 0 && <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 8 }}>{j.techniques.map(t => <Pill key={t}>{t}</Pill>)}</div>}
+      {/* Tabs */}
+      <div style={{ display: "flex", gap: 0, marginBottom: 16, background: C.surface, borderRadius: 10, padding: 4, border: `1px solid ${C.border}` }}>
+        {TABS.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            style={{ flex: 1, padding: "8px 12px", border: "none", borderRadius: 8, cursor: "pointer", fontSize: 12, fontWeight: tab===t.id?700:400, background: tab===t.id?C.primary:"transparent", color: tab===t.id?"#fff":C.textMuted, fontFamily: "'Sora',sans-serif", transition: "all 0.15s" }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
 
-                  {closeIdx === i ? (
-                    <div style={{ background: C.bg, borderRadius: 8, padding: 12, marginBottom: 8 }}>
-                      <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 10 }}>Close Trade</div>
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
-                        <Field label="EXIT PRICE (RM)"><Inp type="number" step="0.01" value={exitF.exitPrice} onChange={e => setExitF({...exitF, exitPrice: e.target.value})} /></Field>
-                        <Field label="EXIT DATE"><Inp type="date" value={exitF.exitDate} onChange={e => setExitF({...exitF, exitDate: e.target.value})} /></Field>
-                      </div>
-                      <Field label="REASON / NOTE"><Inp placeholder="Hit TP / SL / Manual exit..." value={exitF.exitNote} onChange={e => setExitF({...exitF, exitNote: e.target.value})} /></Field>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <Btn variant="success" style={{ flex: 1 }} onClick={() => closeT(i)}>Confirm Close</Btn>
-                        <Btn variant="ghost" onClick={() => setCloseIdx(null)}>Cancel</Btn>
-                      </div>
+      {/* ── OPEN TRADES ── */}
+      {tab === "open" && (
+        open.length === 0 ? <Empty icon="📈" title="No Open Trades" sub="Execute a trade from Hunting List or add manually." action="+ Add Trade" onAction={() => setShowForm(true)} /> : (
+          <div style={{ display: "grid", gap: 12 }}>
+            {journal.map((j, i) => j.status !== "Open" ? null : (
+              <div key={j.id||i} style={{ ...cardStyle, borderLeft: `3px solid ${C.amber}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 800 }}>{j.code} <span style={{ fontSize: 11, color: C.textFaint }}>· {j.sector}</span></div>
+                    <div style={{ fontSize: 11, color: C.textMuted }}>{j.name} · {j.entryDate}</div>
+                    {j.tradeType && <Pill color={C.primary} bg={C.primaryLight}>{j.tradeType}</Pill>}
+                  </div>
+                  <Pill color={C.amber} bg={C.amberLight}>OPEN</Pill>
+                </div>
+
+                {/* Trade Data */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 6, marginBottom: 10 }}>
+                  {[["ENTRY", `RM ${fmt(j.entryPrice)}`], ["LOT", `${Number(j.lot||0).toLocaleString()}u`], ["SL", `RM ${fmt(j.sl)}`], ["REMAINING", `${Number(j.remainingLot||j.lot||0).toLocaleString()}u`]].map(([l,v]) => (
+                    <div key={l} style={{ background: C.bg, borderRadius: 7, padding: "7px 8px", textAlign: "center" }}>
+                      <div style={{ fontSize: 9, color: C.textFaint, fontWeight: 600 }}>{l}</div>
+                      <div style={{ fontSize: 11, fontWeight: 700, fontFamily: "'DM Mono',monospace" }}>{v}</div>
                     </div>
-                  ) : (
+                  ))}
+                </div>
+
+                {/* TP1 & TP2 */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 10 }}>
+                  <div style={{ background: C.greenLight, borderRadius: 8, padding: "8px 12px" }}>
+                    <div style={{ fontSize: 9, color: C.green, fontWeight: 600 }}>TP1 — SELL 50%</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, fontFamily: "'DM Mono',monospace", color: C.green }}>RM {fmt(j.tp1||0)}</div>
+                  </div>
+                  <div style={{ background: "#D1FAE5", borderRadius: 8, padding: "8px 12px" }}>
+                    <div style={{ fontSize: 9, color: C.green, fontWeight: 600 }}>TP2 — TRAILING</div>
+                    <div style={{ fontSize: 13, fontWeight: 800, fontFamily: "'DM Mono',monospace", color: C.green }}>RM {fmt(j.tp2||0)}</div>
+                  </div>
+                </div>
+
+                {/* Partial Exits History */}
+                {j.partialExits?.length > 0 && (
+                  <div style={{ background: C.bg, borderRadius: 8, padding: "8px 12px", marginBottom: 10 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: C.textMuted, marginBottom: 5 }}>PARTIAL EXITS</div>
+                    {j.partialExits.map((pe, pi) => (
+                      <div key={pi} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 2 }}>
+                        <span>{pe.date} · {Number(pe.lot).toLocaleString()}u @ RM {fmt(pe.price)}</span>
+                        <span style={{ fontWeight: 700, color: pe.pl>=0?C.green:C.red }}>{pe.pl>=0?"+":""}RM {fmt(pe.pl)}</span>
+                      </div>
+                    ))}
+                    <div style={{ borderTop: `1px solid ${C.border}`, marginTop: 5, paddingTop: 5, display: "flex", justifyContent: "space-between", fontSize: 11, fontWeight: 700 }}>
+                      <span>Realized P&L so far</span>
+                      <span style={{ color: (j.totalPL||0)>=0?C.green:C.red }}>{(j.totalPL||0)>=0?"+":""}RM {fmt(j.totalPL||0)}</span>
+                    </div>
+                  </div>
+                )}
+
+                {j.techniques?.length > 0 && <div style={{ display: "flex", gap: 5, flexWrap: "wrap", marginBottom: 8 }}>{j.techniques.map(t => <Pill key={t}>{t}</Pill>)}</div>}
+
+                {/* Partial Exit Form */}
+                {partialIdx === i && (
+                  <div style={{ background: C.amberLight, borderRadius: 8, padding: 12, marginBottom: 10, border: `1px solid #FDE68A` }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 10, color: C.amber }}>💰 Partial Exit (Sell 50%)</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 10 }}>
+                      <Field label="EXIT PRICE (RM)"><Inp type="number" step="0.01" value={partialF.price} onChange={e=>setPartialF({...partialF,price:e.target.value})} /></Field>
+                      <Field label="LOT TO SELL"><Inp type="number" value={partialF.lot} onChange={e=>setPartialF({...partialF,lot:e.target.value})} /></Field>
+                      <Field label="DATE"><Inp type="date" value={partialF.date} onChange={e=>setPartialF({...partialF,date:e.target.value})} /></Field>
+                    </div>
                     <div style={{ display: "flex", gap: 8 }}>
-                      <Btn variant="success" onClick={() => setCloseIdx(i)}>Close Trade</Btn>
-                      <Btn variant="danger" style={{ padding: "9px 14px" }} onClick={() => del(i)}>✕</Btn>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </>}
-
-          {closed.length > 0 && <>
-            <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, marginBottom: 8 }}>CLOSED ({closed.length})</div>
-            <div style={{ display: "grid", gap: 8 }}>
-              {journal.map((j, i) => j.status !== "Closed" ? null : (
-                <div key={j.id || i} style={{ ...cardStyle, borderLeft: `3px solid ${j.pl >= 0 ? C.green : C.red}`, padding: "14px 18px" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
-                        <div style={{ fontSize: 13, fontWeight: 800 }}>{j.code}</div>
-                        <Pill color={j.pl >= 0 ? C.green : C.red} bg={j.pl >= 0 ? C.greenLight : C.redLight}>{j.pl >= 0 ? "WIN ✓" : "LOSE ✗"}</Pill>
-                      </div>
-                      <div style={{ fontSize: 11, color: C.textMuted }}>RM {fmt(j.entryPrice)} → RM {fmt(j.exitPrice)} · {j.entryDate} to {j.exitDate}</div>
-                      {j.techniques?.length > 0 && <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 }}>{j.techniques.map(t => <Pill key={t}>{t}</Pill>)}</div>}
-                      {j.exitNote && <div style={{ fontSize: 11, color: C.textMuted, fontStyle: "italic", marginTop: 3 }}>📝 {j.exitNote}</div>}
-                    </div>
-                    <div style={{ textAlign: "right" }}>
-                      <div style={{ fontSize: 15, fontWeight: 800, color: j.pl >= 0 ? C.green : C.red, fontFamily: "'DM Mono',monospace" }}>{j.pl >= 0 ? "+" : ""}RM {fmt(j.pl)}</div>
-                      <div style={{ fontSize: 11, color: j.pl >= 0 ? C.green : C.red }}>{fmtPct(j.plPct)}</div>
-                      <Btn variant="danger" style={{ padding: "3px 9px", fontSize: 10, marginTop: 5 }} onClick={() => del(i)}>✕</Btn>
+                      <Btn variant="success" style={{ flex: 1 }} onClick={() => doPartialExit(i)}>Confirm Partial Exit</Btn>
+                      <Btn variant="ghost" onClick={() => setPartialIdx(null)}>Cancel</Btn>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          </>}
-        </>
+                )}
+
+                {/* Close Trade Form */}
+                {closeIdx === i && (
+                  <div style={{ background: C.bg, borderRadius: 8, padding: 14, marginBottom: 10 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 12 }}>🔒 Close Trade</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+                      <Field label="EXIT PRICE (RM)"><Inp type="number" step="0.01" value={exitF.exitPrice} onChange={e=>setExitF({...exitF,exitPrice:e.target.value})} /></Field>
+                      <Field label="EXIT DATE"><Inp type="date" value={exitF.exitDate} onChange={e=>setExitF({...exitF,exitDate:e.target.value})} /></Field>
+                    </div>
+                    <Field label="SEBAB KELUAR">
+                      <Sel value={exitF.exitReason} onChange={e=>setExitF({...exitF,exitReason:e.target.value})}>
+                        <option value="">Select reason...</option>
+                        {EXIT_REASONS.map(r => <option key={r}>{r}</option>)}
+                      </Sel>
+                    </Field>
+                    <Field label="EXIT NOTE"><Inp placeholder="Additional notes..." value={exitF.exitNote} onChange={e=>setExitF({...exitF,exitNote:e.target.value})} /></Field>
+                    
+                    {/* Post-Mortem */}
+                    <div style={{ background: C.primaryLight, borderRadius: 8, padding: 12, marginBottom: 10 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: C.primary, marginBottom: 10 }}>🧠 POST-MORTEM ANALYSIS</div>
+                      <Field label="APA YANG BERJALAN BAIK?">
+                        <textarea value={exitF.postMortem.whatWorked} onChange={e=>setExitF({...exitF,postMortem:{...exitF.postMortem,whatWorked:e.target.value}})}
+                          placeholder="Setup yang confirm, timing yang tepat..." style={{ ...inp, height: 55, resize: "vertical" }} />
+                      </Field>
+                      <Field label="APA YANG PERLU IMPROVE?">
+                        <textarea value={exitF.postMortem.whatFailed} onChange={e=>setExitF({...exitF,postMortem:{...exitF.postMortem,whatFailed:e.target.value}})}
+                          placeholder="Kesilapan entry, salah baca signal..." style={{ ...inp, height: 55, resize: "vertical" }} />
+                      </Field>
+                      <Field label="LESSON LEARNED">
+                        <textarea value={exitF.postMortem.lesson} onChange={e=>setExitF({...exitF,postMortem:{...exitF.postMortem,lesson:e.target.value}})}
+                          placeholder="Apa yang akan buat lain kali..." style={{ ...inp, height: 55, resize: "vertical" }} />
+                      </Field>
+                    </div>
+
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <Btn variant="success" style={{ flex: 1 }} onClick={() => closeTrade(i)}>Confirm Close Trade</Btn>
+                      <Btn variant="ghost" onClick={() => setCloseIdx(null)}>Cancel</Btn>
+                    </div>
+                  </div>
+                )}
+
+                {closeIdx !== i && partialIdx !== i && (
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <Btn variant="ghost" style={{ flex: 1 }} onClick={() => setPartialIdx(i)}>💰 Partial Exit</Btn>
+                    <Btn variant="success" style={{ flex: 1 }} onClick={() => setCloseIdx(i)}>🔒 Close Trade</Btn>
+                    <Btn variant="danger" style={{ padding: "9px 14px" }} onClick={() => del(i)}>✕</Btn>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )
       )}
 
+      {/* ── CLOSED TRADES ── */}
+      {tab === "closed" && (
+        closed.length === 0 ? <Empty icon="📋" title="No Closed Trades" sub="Closed trades will appear here." /> : (
+          <div style={{ display: "grid", gap: 10 }}>
+            {journal.map((j, i) => j.status !== "Closed" ? null : (
+              <div key={j.id||i} style={{ ...cardStyle, borderLeft: `3px solid ${(j.totalPL||j.pl||0)>=0?C.green:C.red}` }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                  <div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 4 }}>
+                      <div style={{ fontSize: 14, fontWeight: 800 }}>{j.code}</div>
+                      <Pill color={(j.totalPL||j.pl||0)>=0?"#fff":C.red} bg={(j.totalPL||j.pl||0)>=0?C.green:C.redLight}>{(j.totalPL||j.pl||0)>=0?"WIN ✓":"LOSE ✗"}</Pill>
+                      {j.tradeType && <Pill>{j.tradeType}</Pill>}
+                    </div>
+                    <div style={{ fontSize: 11, color: C.textMuted }}>Entry: RM {fmt(j.entryPrice)} → Exit: RM {fmt(j.exitPrice)}</div>
+                    <div style={{ fontSize: 11, color: C.textMuted }}>{j.entryDate} → {j.exitDate} · {j.exitReason || "—"}</div>
+                  </div>
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontSize: 16, fontWeight: 800, color: (j.totalPL||j.pl||0)>=0?C.green:C.red, fontFamily: "'DM Mono',monospace" }}>{(j.totalPL||j.pl||0)>=0?"+":""}RM {fmt(j.totalPL||j.pl||0)}</div>
+                    <div style={{ fontSize: 11, color: (j.plPct||0)>=0?C.green:C.red }}>{fmtPct(j.plPct||0)}</div>
+                  </div>
+                </div>
+
+                {/* Partial exits summary */}
+                {j.partialExits?.length > 0 && (
+                  <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 8 }}>
+                    💰 {j.partialExits.length} partial exit(s) + final close
+                  </div>
+                )}
+
+                {j.techniques?.length > 0 && <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 8 }}>{j.techniques.map(t=><Pill key={t}>{t}</Pill>)}</div>}
+
+                {/* Post-Mortem */}
+                {j.postMortem?.lesson && (
+                  <div style={{ background: C.primaryLight, borderRadius: 8, padding: "10px 12px", marginBottom: 8, border: `1px solid ${C.primaryBorder}` }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: C.primary, marginBottom: 5 }}>🧠 POST-MORTEM</div>
+                    {j.postMortem.whatWorked && <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 3 }}>✅ {j.postMortem.whatWorked}</div>}
+                    {j.postMortem.whatFailed && <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 3 }}>❌ {j.postMortem.whatFailed}</div>}
+                    {j.postMortem.lesson && <div style={{ fontSize: 11, color: C.primary, fontWeight: 600 }}>💡 {j.postMortem.lesson}</div>}
+                  </div>
+                )}
+
+                <Btn variant="danger" style={{ padding: "5px 12px", fontSize: 11 }} onClick={() => del(i)}>✕ Delete</Btn>
+              </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {/* ── PERFORMANCE STATS ── */}
+      {tab === "stats" && (
+        <div>
+          {closed.length === 0 ? <Empty icon="📊" title="No Data Yet" sub="Close some trades to see performance analytics." /> : (
+            <>
+              {/* Overview */}
+              <div style={{ ...cardStyle, marginBottom: 14, background: `linear-gradient(135deg,${C.primary},#1D6FB8)`, color: "#fff" }}>
+                <div style={{ fontSize: 12, opacity: 0.75, marginBottom: 12 }}>OVERALL PERFORMANCE</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                  {[["WIN RATE", `${winRate.toFixed(1)}%`], ["TOTAL P&L", `${totalPL>=0?"+":""}RM ${fmt(totalPL)}`], ["TRADES", `${closed.length}`]].map(([l,v])=>(
+                    <div key={l} style={{ textAlign: "center" }}>
+                      <div style={{ fontSize: 9, opacity: 0.7 }}>{l}</div>
+                      <div style={{ fontSize: 18, fontWeight: 800, fontFamily: "'DM Mono',monospace" }}>{v}</div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Monthly P&L */}
+              {Object.keys(monthlyPL).length > 0 && (
+                <div style={{ ...cardStyle, marginBottom: 14 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, marginBottom: 12 }}>📅 MONTHLY P&L</div>
+                  {Object.entries(monthlyPL).sort().reverse().map(([m, pl]) => (
+                    <div key={m} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <span style={{ fontSize: 12, fontWeight: 600 }}>{m}</span>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ width: 100, background: C.borderLight, borderRadius: 3, height: 8, overflow: "hidden" }}>
+                          <div style={{ width: `${Math.min(Math.abs(pl)/Math.max(...Object.values(monthlyPL).map(Math.abs))*100,100)}%`, height: "100%", background: pl>=0?C.green:C.red, borderRadius: 3 }} />
+                        </div>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: pl>=0?C.green:C.red, width: 80, textAlign: "right" }}>{pl>=0?"+":""}RM {fmt(pl)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Technique Performance */}
+              {Object.keys(techStats).length > 0 && (
+                <div style={{ ...cardStyle, marginBottom: 14 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, marginBottom: 12 }}>🛠 PERFORMANCE BY TECHNIQUE</div>
+                  {Object.entries(techStats).sort((a,b)=>(b[1].wins/b[1].total)-(a[1].wins/a[1].total)).map(([t, s]) => {
+                    const wr = (s.wins/s.total)*100;
+                    return (
+                      <div key={t} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                        <span style={{ fontSize: 12 }}>{t}</span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{ width: 80, background: C.borderLight, borderRadius: 3, height: 6, overflow: "hidden" }}>
+                            <div style={{ width: `${wr}%`, height: "100%", background: wr>=60?C.green:wr>=40?C.amber:C.red, borderRadius: 3 }} />
+                          </div>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: wr>=60?C.green:wr>=40?C.amber:C.red, width: 35 }}>{wr.toFixed(0)}%</span>
+                          <span style={{ fontSize: 10, color: C.textFaint }}>{s.wins}/{s.total}</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Sector Performance */}
+              {Object.keys(sectorStats).length > 0 && (
+                <div style={{ ...cardStyle, marginBottom: 14 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: C.textMuted, marginBottom: 12 }}>🏭 PERFORMANCE BY SECTOR</div>
+                  {Object.entries(sectorStats).sort((a,b)=>b[1].pl-a[1].pl).map(([s, st]) => {
+                    const wr = (st.wins/st.total)*100;
+                    return (
+                      <div key={s} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8, padding: "8px 12px", background: C.bg, borderRadius: 8 }}>
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 600 }}>{s}</div>
+                          <div style={{ fontSize: 10, color: C.textFaint }}>{st.total} trades · {wr.toFixed(0)}% WR</div>
+                        </div>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: st.pl>=0?C.green:C.red, fontFamily: "'DM Mono',monospace" }}>{st.pl>=0?"+":""}RM {fmt(st.pl)}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ── ADD TRADE FORM ── */}
       {showForm && (
-        <Modal title="Add Trade Record" onClose={() => { setShowForm(false); setForm(blank); }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <Field label="STOCK CODE"><Inp placeholder="MAYBANK" value={form.code} onChange={e => setForm({...form, code: e.target.value.toUpperCase()})} /></Field>
-            <Field label="ENTRY DATE"><Inp type="date" value={form.entryDate} onChange={e => setForm({...form, entryDate: e.target.value})} /></Field>
+        <Modal title="Add Trade Record" onClose={() => { setShowForm(false); setForm(blankForm); }}>
+          {/* Pre-Trade Checklist */}
+          <div style={{ background: C.primaryLight, borderRadius: 8, padding: 12, marginBottom: 14, border: `1px solid ${C.primaryBorder}` }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.primary, marginBottom: 10 }}>✅ PRE-TRADE CHECKLIST</div>
+            {PRE_CHECKLIST.map((item, idx) => (
+              <div key={idx} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6, cursor: "pointer" }}
+                onClick={() => setForm(f => ({ ...f, checklist: f.checklist.includes(idx) ? f.checklist.filter(x=>x!==idx) : [...f.checklist, idx] }))}>
+                <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${form.checklist.includes(idx)?C.green:C.border}`, background: form.checklist.includes(idx)?C.green:"transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  {form.checklist.includes(idx) && <span style={{ color: "#fff", fontSize: 10 }}>✓</span>}
+                </div>
+                <span style={{ fontSize: 12, color: form.checklist.includes(idx)?C.green:C.textMuted }}>{item}</span>
+              </div>
+            ))}
+            <div style={{ fontSize: 11, color: C.textMuted, marginTop: 6 }}>{form.checklist.length}/{PRE_CHECKLIST.length} criteria checked</div>
           </div>
-          <Field label="COMPANY NAME"><Inp value={form.name} onChange={e => setForm({...form, name: e.target.value})} /></Field>
-          <Field label="SECTOR"><Sel value={form.sector} onChange={e => setForm({...form, sector: e.target.value})}><option value="">Select...</option>{SECTORS.map(s => <option key={s}>{s}</option>)}</Sel></Field>
+
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <Field label="ENTRY PRICE (RM)"><Inp type="number" step="0.01" value={form.entryPrice} onChange={e => setForm({...form, entryPrice: e.target.value})} /></Field>
-            <Field label="LOT SIZE"><Inp type="number" value={form.lot} onChange={e => setForm({...form, lot: e.target.value})} /></Field>
-            <Field label="STOP LOSS (RM)"><Inp type="number" step="0.01" value={form.sl} onChange={e => setForm({...form, sl: e.target.value})} /></Field>
-            <Field label="TARGET (RM)"><Inp type="number" step="0.01" value={form.tp} onChange={e => setForm({...form, tp: e.target.value})} /></Field>
+            <Field label="STOCK CODE"><Inp placeholder="MAYBANK" value={form.code} onChange={e=>setForm({...form,code:e.target.value.toUpperCase()})} /></Field>
+            <Field label="ENTRY DATE"><Inp type="date" value={form.entryDate} onChange={e=>setForm({...form,entryDate:e.target.value})} /></Field>
           </div>
-          <Field label="TECHNIQUES"><TechButtons selected={form.techniques} onChange={t => setForm({...form, techniques: t})} /></Field>
-          <Field label="NOTES"><Inp value={form.note} onChange={e => setForm({...form, note: e.target.value})} /></Field>
+          <Field label="COMPANY NAME"><Inp value={form.name} onChange={e=>setForm({...form,name:e.target.value})} /></Field>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <Field label="SECTOR"><Sel value={form.sector} onChange={e=>setForm({...form,sector:e.target.value})}><option value="">Select...</option>{SECTORS.map(s=><option key={s}>{s}</option>)}</Sel></Field>
+            <Field label="TRADE TYPE"><Sel value={form.tradeType} onChange={e=>setForm({...form,tradeType:e.target.value})}><option value="">Select...</option>{TRADE_TYPES.map(t=><option key={t}>{t}</option>)}</Sel></Field>
+          </div>
+
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, margin: "10px 0 8px" }}>OHLC DATA (untuk rekod)</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
+            <Field label="OPEN"><Inp type="number" step="0.001" value={form.open} onChange={e=>setForm({...form,open:e.target.value})} /></Field>
+            <Field label="HIGH"><Inp type="number" step="0.001" value={form.high} onChange={e=>setForm({...form,high:e.target.value})} /></Field>
+            <Field label="LOW"><Inp type="number" step="0.001" value={form.low} onChange={e=>setForm({...form,low:e.target.value})} /></Field>
+            <Field label="CLOSE"><Inp type="number" step="0.001" value={form.close} onChange={e=>setForm({...form,close:e.target.value})} /></Field>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+            <Field label="VOLUME"><Inp type="number" value={form.volume} onChange={e=>setForm({...form,volume:e.target.value})} /></Field>
+            <Field label="SMA20 VOL"><Inp type="number" value={form.sma20vol} onChange={e=>setForm({...form,sma20vol:e.target.value})} /></Field>
+            <Field label="EMA 200"><Inp type="number" step="0.001" value={form.ema200val} onChange={e=>setForm({...form,ema200val:e.target.value})} /></Field>
+          </div>
+
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.textMuted, margin: "10px 0 8px" }}>RISK MANAGEMENT</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+            <Field label="ENTRY PRICE (RM)"><Inp type="number" step="0.01" value={form.entryPrice} onChange={e=>setForm({...form,entryPrice:e.target.value})} /></Field>
+            <Field label="LOT SIZE"><Inp type="number" value={form.lot} onChange={e=>setForm({...form,lot:e.target.value})} /></Field>
+            <Field label="STOP LOSS (RM)"><Inp type="number" step="0.01" value={form.sl} onChange={e=>setForm({...form,sl:e.target.value})} /></Field>
+            <Field label="RRR (1:?)"><Sel value={form.rrr} onChange={e=>setForm({...form,rrr:e.target.value})}><option value="2">1:2</option><option value="3">1:3</option><option value="4">1:4</option></Sel></Field>
+            <Field label="TP1 — 50% EXIT (RM)"><Inp type="number" step="0.01" placeholder="Auto-calc kalau kosong" value={form.tp1} onChange={e=>setForm({...form,tp1:e.target.value})} /></Field>
+            <Field label="TP2 — TRAILING (RM)"><Inp type="number" step="0.01" placeholder="Auto-calc kalau kosong" value={form.tp2} onChange={e=>setForm({...form,tp2:e.target.value})} /></Field>
+          </div>
+
+          <Field label="TECHNIQUES"><TechButtons selected={form.techniques} onChange={t=>setForm({...form,techniques:t})} /></Field>
+          <Field label="MARKET CONDITION"><Sel value={form.marketCondition} onChange={e=>setForm({...form,marketCondition:e.target.value})}><option value="">Select...</option>{MARKET_CONDITIONS.map(m=><option key={m}>{m}</option>)}</Sel></Field>
+          <Field label="TRADE NOTES"><textarea value={form.note} onChange={e=>setForm({...form,note:e.target.value})} placeholder="Sebab masuk trade, pemerhatian..." style={{ ...inp, height: 70, resize: "vertical" }} /></Field>
+
           <div style={{ display: "flex", gap: 10 }}>
             <Btn style={{ flex: 1 }} onClick={save}>Save Trade</Btn>
-            <Btn variant="ghost" style={{ flex: 1 }} onClick={() => { setShowForm(false); setForm(blank); }}>Cancel</Btn>
+            <Btn variant="ghost" style={{ flex: 1 }} onClick={() => { setShowForm(false); setForm(blankForm); }}>Cancel</Btn>
           </div>
         </Modal>
       )}
