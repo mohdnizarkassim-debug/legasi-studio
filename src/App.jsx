@@ -143,8 +143,9 @@ const LoginScreen = ({ onLogin }) => {
           <div style={{ width: 64, height: 64, background: `linear-gradient(135deg,${C.primary},#2563EB)`, borderRadius: 18, display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 14px", boxShadow: `0 8px 24px rgba(15,76,129,0.3)` }}>
             <span style={{ color: "#fff", fontSize: 28, fontWeight: 800 }}>L</span>
           </div>
-          <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.4px" }}>LEGASI<span style={{ color: C.primary }}> STUDIO</span></div>
-          <div style={{ fontSize: 12, color: C.textMuted, marginTop: 4 }}>Personal Trading Research System</div>
+          <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: "0.5px", color: C.text }}>LEGASI STUDIO</div>
+          <div style={{ fontSize: 10, color: C.primary, fontWeight: 700, letterSpacing: "2px", marginTop: 2 }}>BURSA ANALITIK PRO</div>
+          <div style={{ fontSize: 11, color: C.textMuted, marginTop: 6 }}>Personal Trading Research System</div>
         </div>
         <div style={{ ...cardStyle, padding: 26 }}>
           <div style={{ fontSize: 14, fontWeight: 700, marginBottom: 18 }}>🔐 Secure Access</div>
@@ -456,6 +457,7 @@ const WatchlistPage = ({ data, onUpdate }) => {
 const TechnicalPage = ({ data, onUpdate }) => {
   const [showForm, setShowForm] = useState(false);
   const [selIdx, setSelIdx] = useState(null);
+  const [editIdx, setEditIdx] = useState(null);
   const blank = { code: "", name: "", sector: "", date: new Date().toISOString().split("T")[0], open: "", high: "", low: "", close: "", volume: "", ema200: "", sma20vol: "", techniques: [], note: "", modal: data.settings?.modal || "", rrr: data.settings?.defaultRRR || "3" };
   const [form, setForm] = useState(blank);
   const analysis = data.analysis || [];
@@ -484,8 +486,21 @@ const TechnicalPage = ({ data, onUpdate }) => {
   const save = () => {
     if (!form.code) return;
     const result = runAnalysis(form);
-    onUpdate({ ...data, analysis: [{ ...form, id: Date.now(), result }, ...analysis] });
-    setShowForm(false); setForm(blank);
+    const updated = [...analysis];
+    if (editIdx !== null) {
+      updated[editIdx] = { ...updated[editIdx], ...form, result };
+    } else {
+      updated.unshift({ ...form, id: Date.now(), result });
+    }
+    onUpdate({ ...data, analysis: updated });
+    setShowForm(false); setEditIdx(null); setForm(blank);
+  };
+
+  const edit = (i) => {
+    setForm({ ...analysis[i] });
+    setEditIdx(i);
+    setSelIdx(null);
+    setShowForm(true);
   };
 
   const addToHunting = (a) => {
@@ -495,7 +510,7 @@ const TechnicalPage = ({ data, onUpdate }) => {
     alert(`${a.code} added to Hunting List! ✅`);
   };
 
-  const del = (i) => { if (!window.confirm("Delete?")) return; onUpdate({ ...data, analysis: analysis.filter((_, x) => x !== i) }); };
+  const del = (i) => { if (!window.confirm("Delete?")) return; onUpdate({ ...data, analysis: analysis.filter((_, x) => x !== i) }); setSelIdx(null); };
   const sel = selIdx !== null ? analysis[selIdx] : null;
 
   return (
@@ -568,6 +583,7 @@ const TechnicalPage = ({ data, onUpdate }) => {
             {sel.result?.signal !== "WAIT" && sel.result?.signal !== "N/A" && (
               <Btn variant="success" style={{ flex: 1 }} onClick={() => addToHunting(sel)}>🎯 Add to Hunting List</Btn>
             )}
+            <Btn variant="ghost" onClick={() => edit(selIdx)}>✏️ Edit</Btn>
             <Btn variant="ghost" onClick={() => setSelIdx(null)}>← Back</Btn>
           </div>
         </div>
@@ -591,6 +607,7 @@ const TechnicalPage = ({ data, onUpdate }) => {
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                     <Pill color={a.result?.signal === "BUY" ? C.green : a.result?.signal === "WATCH" ? C.amber : C.textMuted} bg={a.result?.signal === "BUY" ? C.greenLight : a.result?.signal === "WATCH" ? C.amberLight : C.bg}>{a.result?.signal || "—"}</Pill>
+                    <Btn variant="ghost" style={{ padding: "5px 10px", fontSize: 11 }} onClick={() => edit(i)}>✏️</Btn>
                     <Btn variant="danger" style={{ padding: "5px 10px", fontSize: 11 }} onClick={() => del(i)}>✕</Btn>
                   </div>
                 </div>
@@ -601,7 +618,7 @@ const TechnicalPage = ({ data, onUpdate }) => {
       )}
 
       {showForm && (
-        <Modal title="New Technical Analysis" onClose={() => { setShowForm(false); setForm(blank); }}>
+        <Modal title={editIdx !== null ? "Edit Analysis" : "New Technical Analysis"} onClose={() => { setShowForm(false); setEditIdx(null); setForm(blank); }}>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
             <Field label="STOCK CODE"><Inp placeholder="MAYBANK" value={form.code} onChange={e => setForm({...form, code: e.target.value.toUpperCase()})} /></Field>
             <Field label="DATE"><Inp type="date" value={form.date} onChange={e => setForm({...form, date: e.target.value})} /></Field>
@@ -629,8 +646,8 @@ const TechnicalPage = ({ data, onUpdate }) => {
           <Field label="TECHNIQUES"><TechButtons selected={form.techniques} onChange={t => setForm({...form, techniques: t})} /></Field>
           <Field label="NOTES"><textarea value={form.note} onChange={e => setForm({...form, note: e.target.value})} placeholder="Analysis notes..." style={{ ...inp, height: 70, resize: "vertical" }} /></Field>
           <div style={{ display: "flex", gap: 10 }}>
-            <Btn style={{ flex: 1 }} onClick={save}>Run Analysis & Save</Btn>
-            <Btn variant="ghost" onClick={() => { setShowForm(false); setForm(blank); }}>Cancel</Btn>
+            <Btn style={{ flex: 1 }} onClick={save}>{editIdx !== null ? "Save Changes" : "Run Analysis & Save"}</Btn>
+            <Btn variant="ghost" onClick={() => { setShowForm(false); setEditIdx(null); setForm(blank); }}>Cancel</Btn>
           </div>
         </Modal>
       )}
@@ -1029,26 +1046,43 @@ export default function App() {
         textarea, select, input { font-family:'Sora',sans-serif; }
       `}</style>
 
-      <header style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 18px", height: 54, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 1px 4px rgba(0,0,0,0.05)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-          <div style={{ width: 30, height: 30, background: `linear-gradient(135deg,${C.primary},#2563EB)`, borderRadius: 8, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <span style={{ color: "#fff", fontSize: 13, fontWeight: 800 }}>L</span>
+      <header style={{ background: `linear-gradient(135deg, #0A3260 0%, #0F4C81 100%)`, padding: "0 18px", height: 64, display: "flex", alignItems: "center", justifyContent: "space-between", position: "sticky", top: 0, zIndex: 100, boxShadow: "0 2px 12px rgba(15,76,129,0.3)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <div style={{ width: 38, height: 38, background: "rgba(255,255,255,0.15)", borderRadius: 10, display: "flex", alignItems: "center", justifyContent: "center", border: "1px solid rgba(255,255,255,0.2)" }}>
+            <span style={{ color: "#fff", fontSize: 16, fontWeight: 800 }}>L</span>
           </div>
-          <span style={{ fontSize: 14, fontWeight: 800, letterSpacing: "-0.3px" }}>LEGASI<span style={{ color: C.primary }}> STUDIO</span></span>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 800, letterSpacing: "0.5px", color: "#fff" }}>LEGASI STUDIO</div>
+            <div style={{ fontSize: 9, color: "rgba(255,255,255,0.65)", letterSpacing: "1.5px", fontWeight: 600 }}>BURSA ANALITIK PRO</div>
+          </div>
         </div>
-        <div style={{ fontSize: 11, color: C.textMuted }}>{getTime()}, <strong>Encik Bos</strong> 👋</div>
+        <div style={{ textAlign: "right" }}>
+          <div style={{ fontSize: 11, color: "rgba(255,255,255,0.9)", fontWeight: 600 }}>{getTime()}, <strong>Encik Bos</strong> 👋</div>
+          <div style={{ fontSize: 9, color: "rgba(255,255,255,0.5)" }}>{new Date().toLocaleDateString("ms-MY", { weekday: "short", day: "numeric", month: "short" })}</div>
+        </div>
       </header>
 
-      <nav style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 14px", display: "flex", overflowX: "auto" }}>
+      <nav style={{ background: C.surface, borderBottom: `1px solid ${C.border}`, padding: "0 14px", display: "flex", overflowX: "auto", boxShadow: "0 1px 3px rgba(0,0,0,0.04)" }}>
         {NAV.map(n => (
           <button key={n.id} onClick={() => setPage(n.id)}
-            style={{ padding: "11px 12px", border: "none", background: "none", cursor: "pointer", fontSize: 11, fontWeight: page === n.id ? 700 : 400, color: page === n.id ? C.primary : C.textMuted, borderBottom: page === n.id ? `2.5px solid ${C.primary}` : "2.5px solid transparent", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 4, transition: "all 0.15s", fontFamily: "'Sora',sans-serif" }}>
-            {n.icon} {n.label}
+            style={{ padding: "12px 14px", border: "none", background: "none", cursor: "pointer", fontSize: 12, fontWeight: page === n.id ? 700 : 400, color: page === n.id ? C.primary : C.textMuted, borderBottom: page === n.id ? `2.5px solid ${C.primary}` : "2.5px solid transparent", whiteSpace: "nowrap", display: "flex", alignItems: "center", gap: 5, transition: "all 0.15s", fontFamily: "'Sora',sans-serif" }}>
+            <span style={{ fontSize: 13 }}>{n.icon}</span> {n.label}
           </button>
         ))}
       </nav>
 
       <main style={{ maxWidth: 880, margin: "0 auto", padding: "18px 12px", animation: "fadeIn 0.25s ease" }}>
+        {/* Page Banner */}
+        <div style={{ background: `linear-gradient(135deg, #EFF6FF, #DBEAFE)`, borderRadius: 12, padding: "14px 18px", marginBottom: 18, border: `1px solid ${C.primaryBorder}`, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 11, color: C.primary, fontWeight: 700, letterSpacing: 0.5 }}>LEGASI STUDIO · BURSA ANALITIK PRO</div>
+            <div style={{ fontSize: 12, color: C.textMuted, marginTop: 2 }}>SYSTEM BUILT BY COMMAND, TRADED BY DISCIPLINE</div>
+          </div>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 10, color: C.textFaint }}>Modal</div>
+            <div style={{ fontSize: 13, fontWeight: 800, fontFamily: "'DM Mono',monospace", color: C.primary }}>RM {Number(data.settings?.modal || 0).toLocaleString()}</div>
+          </div>
+        </div>
         {page === "portfolio" && <PortfolioPage data={data} onUpdate={setData} pinUnlocked={pinUnlocked} onRequestPin={() => setShowPin(true)} />}
         {page === "watchlist" && <WatchlistPage data={data} onUpdate={setData} />}
         {page === "technical" && <TechnicalPage data={data} onUpdate={setData} />}
@@ -1059,8 +1093,11 @@ export default function App() {
 
       {showPin && <PinScreen savedPin={data.settings?.pin || "1234"} onUnlock={() => { setPinUnlocked(true); setShowPin(false); }} onCancel={() => setShowPin(false)} />}
 
-      <footer style={{ textAlign: "center", padding: "18px", fontSize: 10, color: C.textFaint }}>
-        LEGASI STUDIO v2.0 · All data stored locally · Private & Secure
+      <footer style={{ background: `linear-gradient(135deg, #0A3260, #0F4C81)`, padding: "16px 18px", marginTop: 20 }}>
+        <div style={{ textAlign: "center", fontSize: 10, color: "rgba(255,255,255,0.5)", letterSpacing: 0.5 }}>
+          LEGASI STUDIO · BURSA ANALITIK PRO · v2.0<br />
+          <span style={{ fontSize: 9, opacity: 0.6 }}>SYSTEM BUILT BY COMMAND, TRADED BY DISCIPLINE</span>
+        </div>
       </footer>
     </div>
   );
